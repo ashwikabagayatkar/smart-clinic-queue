@@ -8,15 +8,61 @@ static unsigned checks, suites;
     fprintf(stderr, "%s:%d: FAILED: %s\n", __FILE__, __LINE__, #expr); exit(EXIT_FAILURE); \
 } } while (0)
 static Patient *reg(Clinic *c, const char *name) {
-    Patient *p = clinic_register(c, name, 30); CHECK(p); return p;
+    Patient *p = clinic_register(c, name, 30, 4); CHECK(p); return p;
+}
+static void awaiting_triage(void) {
+    Clinic c; clinic_init(&c);
+    Patient *p = clinic_register_pending(&c, "Pending Fictional", 25);
+    CHECK(p && p->status == AWAITING_TRIAGE && p->severity == UNASSIGNED_PRIORITY);
+    CHECK(!clinic_checkin(&c, p->id, 2, 100));
+    CHECK(!clinic_next(&c));
+    CHECK(!clinic_review_checkin(&c, p->id, 0, 100));
+    CHECK(clinic_save(&c, "build/pending-test.db"));
+    CHECK(clinic_load(&c, "build/pending-test.db"));
+    p = table_find(&c, 1);
+    CHECK(p && p->status == AWAITING_TRIAGE && p->severity == UNASSIGNED_PRIORITY);
+    CHECK(clinic_review_checkin(&c, p->id, 2, 101));
+    CHECK(p->severity == 2 && p->status == WAITING);
+    CHECK(clinic_undo(&c));
+    CHECK(p->status == AWAITING_TRIAGE && p->severity == UNASSIGNED_PRIORITY);
+    CHECK(clinic_review_checkin(&c, p->id, 4, 102));
+    CHECK(!p->needs_review);
+    CHECK(clinic_next(&c) == p); CHECK(clinic_complete(&c, 110));
+    CHECK(c.history_head->severity == 4);
+    CHECK(clinic_require_review(&c, p->id));
+    CHECK(p->needs_review);
+    CHECK(!clinic_checkin(&c, p->id, 2, 120));
+    CHECK(clinic_save(&c, "build/pending-test.db"));
+    CHECK(clinic_load(&c, "build/pending-test.db"));
+    CHECK(table_find(&c, 1)->needs_review);
+    CHECK(!clinic_checkin(&c, 1, 2, 121));
+    CHECK(clinic_review_checkin(&c, 1, 2, 122));
+    clinic_free(&c); remove("build/pending-test.db"); ++suites;
+}
+static void registration_severity(void) {
+    Clinic c; clinic_init(&c);
+    CHECK(!clinic_register(&c, "Missing severity", 20, 0));
+    CHECK(!clinic_register(&c, "Invalid severity", 20, 5));
+    CHECK(c.patient_count == 0 && c.next_id == 1);
+    for (unsigned severity = 1; severity <= 4; ++severity) {
+        Patient *p = clinic_register(&c, "Staff assigned", 25, severity);
+        CHECK(p && p->severity == severity && p->status == REGISTERED);
+        CHECK(clinic_checkin(&c, p->id, p->severity, 100));
+    }
+    for (unsigned severity = 1; severity <= 4; ++severity) {
+        Patient *p = clinic_next(&c);
+        CHECK(p && p->severity == severity);
+        CHECK(clinic_complete(&c, 200));
+    }
+    clinic_free(&c); ++suites;
 }
 static void registration_and_indexes(void) {
     Clinic c; clinic_init(&c);
-    CHECK(!clinic_register(&c, "", 30)); CHECK(!clinic_register(&c, "  ", 30));
-    CHECK(!clinic_register(&c, "Bad|Name", 30)); CHECK(!clinic_register(&c, "Bad\nName", 30));
-    CHECK(!clinic_register(&c, "A", 151)); CHECK(!clinic_register(&c, NULL, 30));
+    CHECK(!clinic_register(&c, "", 30, 4)); CHECK(!clinic_register(&c, "  ", 30, 4));
+    CHECK(!clinic_register(&c, "Bad|Name", 30, 4)); CHECK(!clinic_register(&c, "Bad\nName", 30, 4));
+    CHECK(!clinic_register(&c, "A", 151, 4)); CHECK(!clinic_register(&c, NULL, 30, 4));
     char long_name[NAME_LEN + 1]; memset(long_name, 'x', NAME_LEN); long_name[NAME_LEN] = 0;
-    CHECK(!clinic_register(&c, long_name, 30));
+    CHECK(!clinic_register(&c, long_name, 30, 4));
     Patient *a = reg(&c, "Mira"), *b = reg(&c, "Mira");
     reg(&c, "Aaron"); reg(&c, "Zoe"); reg(&c, "Nora"); reg(&c, "Mira");
     Patient *matches[4];
@@ -35,7 +81,7 @@ static void registration_and_indexes(void) {
     CHECK(c.patient_count == 306);
     for (uint64_t i = 1; i <= 306; ++i) CHECK(table_find(&c, i)->id == i);
     CHECK(c.buckets[1] && c.buckets[1]->hash_next); CHECK(!table_find(&c, 99999));
-    c.next_id = UINT64_MAX; CHECK(!clinic_register(&c, "Overflow", 1));
+    c.next_id = UINT64_MAX; CHECK(!clinic_register(&c, "Overflow", 1, 4));
     clinic_free(&c); ++suites;
 }
 static void heap_and_fifo(void) {
@@ -114,7 +160,7 @@ static void undo_visits(void) {
     Clinic c; clinic_init(&c);
     Patient *a = reg(&c, "A"), *b = reg(&c, "B");
     CHECK(clinic_checkin(&c, a->id, 1, 100)); CHECK(clinic_undo(&c));
-    CHECK(a->status == REGISTERED && !a->order && !a->severity && !a->checked_in);
+    CHECK(a->status == REGISTERED && !a->order && a->severity == 4 && !a->checked_in);
     CHECK(clinic_checkin(&c, a->id, 4, 101));
     CHECK(clinic_checkin(&c, b->id, 4, 102)); CHECK(clinic_undo(&c));
     CHECK(c.normal.size == 1 && b->status == REGISTERED);
@@ -266,6 +312,6 @@ static void persistence(void) {
     clinic_free(&c); clinic_free(&restored); remove(path); ++suites;
 }
 int main(void) {
-    registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); persistence();
+    awaiting_triage(); registration_severity(); registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); persistence();
     printf("PASS: %u suites, %u checks\n", suites, checks); return EXIT_SUCCESS;
 }

@@ -1,0 +1,28 @@
+{
+  "version": "demo-2026-01",
+  "notice": "Software demonstration rules only. Not clinically validated, not a diagnosis, and never a substitute for staff assessment. Suggested priority is not the final priority.",
+  "emergency_instruction": "If these warning signs are happening now, seek immediate emergency assistance: call your local emergency number or ask someone to get help. Tell clinic staff now. Do not wait for this form or the consultation queue.",
+  "warnings": [
+    {"id":"severe_breathing","label":"Are you having severe trouble breathing right now?","source":"https://www.nhs.uk/conditions/shortness-of-breath/"},
+    {"id":"stroke_signs","label":"Do you have new face drooping, arm weakness, or difficulty speaking?","source":"https://www.nhs.uk/conditions/stroke/symptoms/"},
+    {"id":"unconscious","label":"Are you fainting repeatedly, very difficult to wake, or is someone helping you because you are not fully awake?","source":"https://www.nhs.uk/conditions/first-aid/"},
+    {"id":"heavy_bleeding","label":"Do you have heavy bleeding that will not stop?","source":"https://www.nhs.uk/conditions/first-aid/"}
+  ],
+  "symptoms": [
+    {"id":"breathing","label":"Difficulty breathing","category":"Chest & breathing","followups":[{"id":"able_speak","label":"Can you speak a full sentence without stopping for breath?"}]},
+    {"id":"chest_pain","label":"Chest pain or pressure","category":"Chest & breathing","followups":[{"id":"ongoing","label":"Is the pain happening now?","emergency_when":"yes"}]},
+    {"id":"headache","label":"Headache","category":"Head & nerves","followups":[{"id":"sudden","label":"Did it start suddenly and feel extremely severe?","emergency_when":"yes"},{"id":"vision_change","label":"Have you noticed a new change in your vision?"}]},
+    {"id":"nasal","label":"Runny or blocked nose","category":"Nose & throat","followups":[{"id":"fever","label":"Do you have a fever?"},{"id":"breathing_normal","label":"Are you breathing comfortably?"}]},
+    {"id":"sore_throat","label":"Sore throat","category":"Nose & throat","followups":[{"id":"swallow","label":"Can you swallow fluids?"}]},
+    {"id":"urinary","label":"Pain or discomfort when passing urine","category":"Stomach & urinary","followups":[{"id":"fever","label":"Do you have a fever?"},{"id":"back_pain","label":"Do you also have pain in your back or side?"}]},
+    {"id":"abdominal","label":"Stomach or abdominal pain","category":"Stomach & urinary","followups":[{"id":"severe","label":"Is this pain severe or getting worse?"}]},
+    {"id":"rash","label":"Rash or skin irritation","category":"Skin & general","followups":[{"id":"spreading","label":"Is it spreading quickly?"}]},
+    {"id":"other","label":"Something else / not listed","category":"Skin & general","followups":[]}
+  ],
+  "rules": [
+    {"id":"DEMO-C1","symptoms":["breathing"],"followups":{"breathing.able_speak":"no"},"warnings":{"severe_breathing":"yes","stroke_signs":"no","unconscious":"no","heavy_bleeding":"no"},"self_severity":"severe","duration_hours":{"min":0,"max":24},"priority":1,"explanation":"This demonstration pattern combines current severe breathing difficulty with inability to speak a full sentence. Immediate emergency assistance is advised; staff must review and set the final priority.","review_status":"demo_reviewed","source":"Public emergency advice: https://www.nhs.uk/conditions/shortness-of-breath/ . Exact rule is software-test-reviewed only, not clinically validated."},
+    {"id":"DEMO-U2","symptoms":["urinary"],"followups":{"urinary.fever":"yes","urinary.back_pain":"yes"},"warnings":{"severe_breathing":"no","stroke_signs":"no","unconscious":"no","heavy_bleeding":"no"},"self_severity":"moderate","duration_hours":{"min":0,"max":72},"priority":2,"explanation":"The selected urinary discomfort, fever and back/side pain match a demonstration Urgent pattern. This is not a diagnosis; staff must assess the patient and confirm or override the suggestion.","review_status":"demo_reviewed","source":"Synthetic teaching scenario; software-test-reviewed only. Requires qualified clinical validation before clinical use."},
+    {"id":"DEMO-P3","symptoms":["headache"],"followups":{"headache.sudden":"no","headache.vision_change":"no"},"warnings":{"severe_breathing":"no","stroke_signs":"no","unconscious":"no","heavy_bleeding":"no"},"self_severity":"moderate","duration_hours":{"min":0,"max":48},"priority":3,"explanation":"This exact moderate-headache teaching scenario, with explicit negative follow-up and warning answers, matches the demonstration Priority rule. Staff assessment is still required.","review_status":"demo_reviewed","source":"Synthetic teaching scenario; software-test-reviewed only. Not clinically validated."},
+    {"id":"DEMO-N4","symptoms":["nasal"],"followups":{"nasal.fever":"no","nasal.breathing_normal":"yes"},"warnings":{"severe_breathing":"no","stroke_signs":"no","unconscious":"no","heavy_bleeding":"no"},"self_severity":"mild","duration_hours":{"min":0,"max":72},"priority":4,"explanation":"Only the mild nasal-symptom teaching pattern was reported, with comfortable breathing, no fever, and explicit negative warning answers. The demo suggests Normal; staff must still confirm the final priority.","review_status":"demo_reviewed","source":"Synthetic teaching scenario; software-test-reviewed only. Not clinically validated."}
+  ]
+}

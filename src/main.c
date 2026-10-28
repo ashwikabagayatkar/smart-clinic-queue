@@ -3,6 +3,9 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static bool read_line(const char *prompt, char *buf, size_t capacity) {
     fputs(prompt, stdout); fflush(stdout);
@@ -31,7 +34,9 @@ static bool read_number(const char *prompt, uint64_t *value) {
     *value = (uint64_t)n; return true;
 }
 static void print_patient(const Clinic *c, const Patient *p) {
-    printf("ID=%" PRIu64 " | %s | age=%u | severity=%u | %s", p->id, p->name, p->age, p->severity, status_name(p->status));
+    printf("ID=%" PRIu64 " | %s | age=%u | severity=", p->id, p->name, p->age);
+    if (p->status == AWAITING_TRIAGE) printf("Unassigned"); else printf("%u", p->severity);
+    printf(" | %s", status_name(p->status));
     size_t wait = clinic_wait_minutes(c, p->id);
     if (wait != SIZE_MAX) printf(" | estimated wait=%zu min", wait);
     putchar('\n');
@@ -91,18 +96,18 @@ static void history(const Clinic *c) {
     }
     if (!count) puts("No completed or missed visits.");
 }
-int main(int argc, char **argv) {
+static int clinic_main(int argc, char **argv) {
     if (argc > 2) { fprintf(stderr, "Usage: %s [data-file]\n", argv[0]); return EXIT_FAILURE; }
     const char *path = argc == 2 ? argv[1] : "clinic.db";
     Clinic c; clinic_init(&c);
     /* Never silently replace unreadable or malformed existing data. */
-    FILE *probe = fopen(path, "r");
-    if (probe) {
-        fclose(probe);
+    bool present;
+    if (!clinic_file_present(path, &present)) {
+        fprintf(stderr, "Cannot open %s.\n", path); return EXIT_FAILURE;
+    }
+    if (present) {
         if (!clinic_load(&c, path)) { fprintf(stderr, "Cannot load %s; data left unchanged.\n", path); return EXIT_FAILURE; }
         puts("Saved clinic loaded.");
-    } else if (errno != ENOENT) {
-        fprintf(stderr, "Cannot open %s.\n", path); return EXIT_FAILURE;
     }
     puts("Smart Clinic Queue & Triage | 1=critical, 2=urgent, 3=priority, 4=normal");
     bool running = true; int result = EXIT_SUCCESS;
@@ -116,10 +121,11 @@ int main(int argc, char **argv) {
         switch (choice) {
         case 0: running = false; break;
         case 1:
-            if (read_line("Name: ", name, sizeof name) && read_number("Age (0-150): ", &age)) {
-                p = age <= 150 ? clinic_register(&c, name, (unsigned)age) : NULL;
+            if (read_line("Name: ", name, sizeof name) && read_number("Age (0-150): ", &age) &&
+                read_number("Severity (1=Critical, 2=Urgent, 3=Priority, 4=Normal): ", &severity)) {
+                p = age <= 150 && severity >= 1 && severity <= 4 ? clinic_register(&c, name, (unsigned)age, (unsigned)severity) : NULL;
                 if (p) { puts("Registered:"); print_patient(&c, p); }
-                else puts("Registration failed: invalid name/age or insufficient memory.");
+                else puts("Registration failed: invalid name/age/severity or insufficient memory.");
             }
             break;
         case 2:
@@ -161,3 +167,34 @@ int main(int argc, char **argv) {
     else puts("Saved. Goodbye.");
     clinic_free(&c); return result;
 }
+
+#ifdef _WIN32
+/* Native MinGW Unicode entry point; only CLI targets link with -municode. */
+int wmain(int argc, wchar_t **wide_argv) {
+    char **argv = calloc((size_t)argc + 1, sizeof *argv);
+    if (!argv) return EXIT_FAILURE;
+    bool ok = true;
+    for (int i = 0; i < argc; ++i) {
+        int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide_argv[i], -1, NULL, 0, NULL, NULL);
+        if (count <= 0 || !(argv[i] = malloc((size_t)count)) ||
+            !WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide_argv[i], -1, argv[i], count, NULL, NULL)) {
+            ok = false; break;
+        }
+    }
+    UINT input_cp = GetConsoleCP(), output_cp = GetConsoleOutputCP();
+    DWORD mode;
+    bool input_console = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != 0;
+    bool output_console = GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) != 0;
+    output_console = (GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &mode) != 0) || output_console;
+    if (input_console) SetConsoleCP(CP_UTF8);
+    if (output_console) SetConsoleOutputCP(CP_UTF8);
+    int result = ok ? clinic_main(argc, argv) : EXIT_FAILURE;
+    if (!ok) fputs("Cannot convert Windows command-line arguments to UTF-8.\n", stderr);
+    if (input_console) SetConsoleCP(input_cp);
+    if (output_console) SetConsoleOutputCP(output_cp);
+    for (int i = 0; i < argc; ++i) free(argv[i]);
+    free(argv); return result;
+}
+#else
+int main(int argc, char **argv) { return clinic_main(argc, argv); }
+#endif

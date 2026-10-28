@@ -15,11 +15,11 @@ void clinic_free(Clinic *c) {
     clinic_init(c);
 }
 const char *status_name(Status s) {
-    static const char *const names[] = {"Registered", "Waiting", "Consulting", "Completed", "No-show"};
-    return s >= REGISTERED && s <= NO_SHOW ? names[s] : "Invalid";
+    static const char *const names[] = {"Registered", "Waiting", "Consulting", "Completed", "No-show", "Awaiting triage"};
+    return s >= REGISTERED && s <= AWAITING_TRIAGE ? names[s] : "Invalid";
 }
-Patient *clinic_register(Clinic *c, const char *name, unsigned age) {
-    if (!name || !*name || strlen(name) >= NAME_LEN || age > 150 || c->next_id == UINT64_MAX) return NULL;
+static Patient *register_patient(Clinic *c, const char *name, unsigned age, unsigned severity, bool pending) {
+    if (!name || !*name || strlen(name) >= NAME_LEN || age > 150 || (!pending && (severity < 1 || severity > 4)) || c->next_id == UINT64_MAX) return NULL;
     bool visible = false;
     for (const unsigned char *s = (const unsigned char *)name; *s; ++s) {
         if (iscntrl(*s) || *s == '|') return NULL;
@@ -28,14 +28,20 @@ Patient *clinic_register(Clinic *c, const char *name, unsigned age) {
     if (!visible) return NULL;
     Patient *p = calloc(1, sizeof *p);
     if (!p) return NULL;
-    p->id = c->next_id; p->age = age; p->status = REGISTERED;
+    p->id = c->next_id; p->age = age; p->severity = severity; p->status = pending ? AWAITING_TRIAGE : REGISTERED; p->needs_review = pending;
     strcpy(p->name, name);
     if (!tree_insert(&c->names, p)) { free(p); return NULL; }
     table_insert(c, p); ++c->next_id; return p;
 }
-bool clinic_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
+Patient *clinic_register(Clinic *c, const char *name, unsigned age, unsigned severity) {
+    return register_patient(c, name, age, severity, false);
+}
+Patient *clinic_register_pending(Clinic *c, const char *name, unsigned age) {
+    return register_patient(c, name, age, UNASSIGNED_PRIORITY, true);
+}
+static bool checkin(Clinic *c, uint64_t id, unsigned severity, time_t now, bool reviewed) {
     Patient *p = table_find(c, id);
-    if (!p || p->status == WAITING || p->status == CONSULTING || severity < 1 || severity > 4 ||
+    if (!p || ((p->status == AWAITING_TRIAGE || p->needs_review) && !reviewed) || p->status == WAITING || p->status == CONSULTING || severity < 1 || severity > 4 ||
         now < 0 || c->next_order == UINT64_MAX) return false;
     if (!undo_push(c, p)) return false;
     uint64_t old_order = p->order;
@@ -48,7 +54,18 @@ bool clinic_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
     }
     /* The stack records the new visit identity as well as the previous state. */
     c->undo->order = p->order;
-    p->checked_in = now; p->status = WAITING; ++c->next_order; return true;
+    p->checked_in = now; p->status = WAITING; p->needs_review = false; ++c->next_order; return true;
+}
+bool clinic_require_review(Clinic *c, uint64_t id) {
+    Patient *p = table_find(c, id);
+    if (!p || p->status == WAITING || p->status == CONSULTING) return false;
+    p->needs_review = true; return true;
+}
+bool clinic_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
+    return checkin(c, id, severity, now, false);
+}
+bool clinic_review_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
+    return checkin(c, id, severity, now, true);
 }
 Patient *clinic_next(Clinic *c) {
     if (c->active) return NULL;
