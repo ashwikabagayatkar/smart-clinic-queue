@@ -12,7 +12,8 @@
 #define HASH_BUCKETS 127
 #define CONSULT_MINUTES 15
 
-typedef enum { REGISTERED, WAITING, CONSULTING, COMPLETED, NO_SHOW, AWAITING_TRIAGE } Status;
+/* Namespaced to avoid Windows nb30.h REGISTERED (0x04); stored value stays 0. */
+typedef enum { CLINIC_REGISTERED = 0, WAITING, CONSULTING, COMPLETED, NO_SHOW, AWAITING_TRIAGE } Status;
 typedef struct Patient {
     uint64_t id, order;
     char name[NAME_LEN];

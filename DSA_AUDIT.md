@@ -69,4 +69,16 @@ Limitations: no current rule has qualified clinical validation; the staff PIN is
 
 Normal Make/batch/launcher builds now share `tools/build.py`, with native suffixes, strict C11 warnings, explicit UTF-8 charsets and MinGW ANSI stdio. Windows CLI targets use `wmain`/`-municode`; the C DLL continues using an opaque C ABI. Snapshot writes use exclusive `_wopen` temporary creation and wide replacement APIs. Python owns explicit DLL search-directory handles and uses Windows-exclusive loopback binding. Normal tests/cleanup use Python rather than POSIX shell commands; the legacy shell test remains an optional Linux target. No DSA implementation has been replaced or moved to JavaScript.
 
-`tests/test_portability.py` checks cache stability and safe cleanup on both platforms, and declares native PE/ABI, batch exit-code and spaced-project-path tests as Windows-only. Assessment/CLI tests now include Unicode names, Unicode/spaced data paths, staff review and restart. Linux execution of these portable cases is not Windows evidence. Native Windows/MinGW builds and Windows-only tests remain unexecuted in this environment; README records the exact `mingw32-make` and batch commands for verification.
+`tests/test_portability.py` checks cache stability and safe cleanup on both platforms, and declares native PE/ABI, batch exit-code and spaced-project-path tests as Windows-only. Assessment/CLI tests now include Unicode names, Unicode/spaced data paths, staff review and restart. Linux execution of these portable cases is not Windows evidence. Native Windows builds and Windows-only Python tests remain unexecuted in this environment; README records the exact `mingw32-make` and batch commands for verification.
+
+## Windows persistence status regression
+
+Windows `windows.h` imports NetBIOS `REGISTERED=0x04`, colliding with the original
+status enum in `parse_patient`. Renaming the C member to `CLINIC_REGISTERED=0`
+fixes the comparison without changing serialized statuses, queue scheduling or any
+DSA implementation. `persistence_status_collision` tests registered and no-show
+round trips independently, LF input, and empty restored queues; the original full
+round-trip assertion is retained. Windows test compilation also includes the SDK
+before `clinic.h` to guard the opposite include order. Unmodified MinGW/Wine
+execution reproduced the original failure; fixed MinGW/Wine C suites pass. This is
+Linux-hosted compatibility testing, not a native Windows verification claim.

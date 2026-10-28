@@ -16,7 +16,7 @@ void clinic_free(Clinic *c) {
 }
 const char *status_name(Status s) {
     static const char *const names[] = {"Registered", "Waiting", "Consulting", "Completed", "No-show", "Awaiting triage"};
-    return s >= REGISTERED && s <= AWAITING_TRIAGE ? names[s] : "Invalid";
+    return s >= CLINIC_REGISTERED && s <= AWAITING_TRIAGE ? names[s] : "Invalid";
 }
 static Patient *register_patient(Clinic *c, const char *name, unsigned age, unsigned severity, bool pending) {
     if (!name || !*name || strlen(name) >= NAME_LEN || age > 150 || (!pending && (severity < 1 || severity > 4)) || c->next_id == UINT64_MAX) return NULL;
@@ -28,7 +28,7 @@ static Patient *register_patient(Clinic *c, const char *name, unsigned age, unsi
     if (!visible) return NULL;
     Patient *p = calloc(1, sizeof *p);
     if (!p) return NULL;
-    p->id = c->next_id; p->age = age; p->severity = severity; p->status = pending ? AWAITING_TRIAGE : REGISTERED; p->needs_review = pending;
+    p->id = c->next_id; p->age = age; p->severity = severity; p->status = pending ? AWAITING_TRIAGE : CLINIC_REGISTERED; p->needs_review = pending;
     strcpy(p->name, name);
     if (!tree_insert(&c->names, p)) { free(p); return NULL; }
     table_insert(c, p); ++c->next_id; return p;

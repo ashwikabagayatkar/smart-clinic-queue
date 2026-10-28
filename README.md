@@ -312,4 +312,38 @@ This app has a local shared staff-PIN gate, not individual enterprise accounts. 
 | Narrow Windows CLI arguments | `wmain`, `-municode`, UTF-8 input/output handling and shared wide-path probe. |
 | POSIX file/VPN/process assumptions | Windows `msvcrt` locking versus POSIX `fcntl`; Windows exclusive socket binding; platform-specific launcher stop signal. No VPN/container runtime required. |
 
-Executed in the current Linux environment: strict GCC builds, portable C/API/assessment/persistence/queue tests, Unicode/spaced paths on Linux, sanitizer checks and browser workflows. A Windows recipe dry-run is only command inspection. No Windows machine, MinGW cross-compiler or Wine runtime is available here: no native Windows compile/runtime success is claimed. Run the Windows suite and GUI workflow locally; unexpected DLL locks, CRT differences, Windows Defender/file-sharing behavior, or terminal shutdown issues can only be resolved conclusively with that output.
+Executed in the current Linux environment: strict GCC builds, portable C/API/assessment/persistence/queue tests, Unicode/spaced paths on Linux, sanitizer checks and browser workflows. A Windows recipe dry-run is only command inspection. The initial audit had no Windows machine, MinGW cross-compiler or Wine runtime. The persistence investigation below subsequently used temporary MinGW/Wine tooling on Linux; no native Windows compile/runtime success is claimed. Run the Windows suite and GUI workflow locally; unexpected DLL locks, CRT differences, Windows Defender/file-sharing behavior, or terminal shutdown issues can only be resolved conclusively with that output.
+
+### Windows persistence regression: SDK macro collision
+
+A failure at the former `tests/test_clinic.c:273` was traced to the Windows SDK's
+`nb30.h` defining `REGISTERED` as `0x04` after `clinic.h` had declared that enum
+member as `0`. This changed the loader's status validation: registered patients
+were rejected, and no-show status `4` was interpreted as registered. The public C
+enum now uses `CLINIC_REGISTERED = 0`; all stored status numbers and the snapshot
+format remain unchanged. Existing snapshots need no conversion. This defect was
+not caused by UTF-8 paths, CRLF, permissions, file closing or temporary-file cleanup.
+Save/load still return a boolean; a false result alone does not distinguish I/O
+failure from rejected snapshot contents. Failed loads preserve the current clinic.
+
+Regression coverage includes Windows headers before the clinic header, independent
+registered/no-show round trips, a raw LF fixture, repeated saves, corrupt snapshots,
+queue restoration and assessment review. The original failure was reproduced with
+MinGW GCC 14.2 cross-compilation and Wine 10 on Linux, and the fixed C suites passed
+there. **Wine is not native Windows verification**; the full native Python/DLL/batch
+workflow must still be checked on your Windows machine.
+
+Stop the clinic application, then run in PowerShell from your existing clone:
+
+```powershell
+git fetch origin
+git switch --track origin/fix-windows-persistence
+mingw32-make all
+mingw32-make test
+.\run.bat
+```
+
+If the local fix branch already exists, use `git switch fix-windows-persistence`
+and `git pull --ff-only` instead of creating it again. Preserve any local edits
+before switching branches; no reset or database deletion is needed. The builder
+recompiles changed source/header inputs automatically.

@@ -1,3 +1,7 @@
+#ifdef _WIN32
+/* Include before our header: SDK macros must not alter the public enum. */
+#include <windows.h>
+#endif
 #include "clinic.h"
 #include <inttypes.h>
 #include <stdlib.h>
@@ -46,7 +50,7 @@ static void registration_severity(void) {
     CHECK(c.patient_count == 0 && c.next_id == 1);
     for (unsigned severity = 1; severity <= 4; ++severity) {
         Patient *p = clinic_register(&c, "Staff assigned", 25, severity);
-        CHECK(p && p->severity == severity && p->status == REGISTERED);
+        CHECK(p && p->severity == severity && p->status == CLINIC_REGISTERED);
         CHECK(clinic_checkin(&c, p->id, p->severity, 100));
     }
     for (unsigned severity = 1; severity <= 4; ++severity) {
@@ -160,10 +164,10 @@ static void undo_visits(void) {
     Clinic c; clinic_init(&c);
     Patient *a = reg(&c, "A"), *b = reg(&c, "B");
     CHECK(clinic_checkin(&c, a->id, 1, 100)); CHECK(clinic_undo(&c));
-    CHECK(a->status == REGISTERED && !a->order && a->severity == 4 && !a->checked_in);
+    CHECK(a->status == CLINIC_REGISTERED && !a->order && a->severity == 4 && !a->checked_in);
     CHECK(clinic_checkin(&c, a->id, 4, 101));
     CHECK(clinic_checkin(&c, b->id, 4, 102)); CHECK(clinic_undo(&c));
-    CHECK(c.normal.size == 1 && b->status == REGISTERED);
+    CHECK(c.normal.size == 1 && b->status == CLINIC_REGISTERED);
     CHECK(clinic_next(&c) == a); CHECK(clinic_complete(&c, 103));
     CHECK(clinic_checkin(&c, a->id, 2, 104)); CHECK(clinic_undo(&c));
     CHECK(a->status == COMPLETED && a->order == c.history_head->order);
@@ -215,7 +219,7 @@ static void dsa_edges(void) {
     CHECK(!clinic_undo(&c)); /* stale original check-in cannot undo a completed visit */
     CHECK(clinic_checkin(&c, a->id, 1, 121));
     CHECK(clinic_checkin(&c, d->id, 1, 122));
-    CHECK(clinic_undo(&c)); CHECK(d->status == REGISTERED); CHECK(c.urgent.size == 1);
+    CHECK(clinic_undo(&c)); CHECK(d->status == CLINIC_REGISTERED); CHECK(c.urgent.size == 1);
     CHECK(clinic_undo(&c)); CHECK(c.urgent.size == 0);
     CHECK(clinic_checkin(&c, a->id, 3, 123)); CHECK(clinic_next(&c) == a);
     CHECK(c.urgent.size == 0); CHECK(!heap_pop(&c.urgent));
@@ -257,6 +261,35 @@ static void dsa_edges(void) {
 }
 static void write_file(const char *path, const char *text) {
     FILE *f = fopen(path, "w"); CHECK(f); CHECK(fputs(text, f) >= 0); CHECK(!fclose(f));
+}
+/* Regression: Windows defines REGISTERED as 4, which used to corrupt the
+   loader's status-0/status-4 validation. Test both records independently. */
+static void persistence_status_collision(void) {
+    const char *path = "build/status-collision.db";
+    remove(path); remove("build/status-collision.db.tmp");
+    Clinic original, restored; clinic_init(&original); clinic_init(&restored);
+    CHECK(CLINIC_REGISTERED == 0 && NO_SHOW == 4);
+    Patient *p = reg(&original, "Fictional Registered");
+    CHECK(clinic_save(&original, path));
+    CHECK(clinic_load(&restored, path));
+    CHECK(table_find(&restored, p->id)->status == CLINIC_REGISTERED);
+    CHECK(!restored.urgent.size && !restored.normal.size && !restored.history_head);
+    CHECK(clinic_checkin(&original, p->id, 4, 100));
+    CHECK(clinic_no_show(&original, p->id, 110));
+    CHECK(clinic_save(&original, path));
+    CHECK(clinic_load(&restored, path));
+    CHECK(table_find(&restored, p->id)->status == NO_SHOW);
+    CHECK(restored.history_head && restored.history_head->outcome == NO_SHOW);
+    CHECK(!restored.urgent.size && !restored.normal.size);
+    /* Raw LF fixture works even when the Windows CRT normally writes CRLF.
+       The clinic_save round trips above exercise the platform's own output. */
+    const char *fixture = "CLINIC2|2|1\nP|1|Fictional Registered|30|4|0|0|0|0\nEND\n";
+    FILE *f = fopen(path, "wb"); CHECK(f);
+    CHECK(fwrite(fixture, 1, strlen(fixture), f) == strlen(fixture));
+    CHECK(!fclose(f));
+    CHECK(clinic_load(&restored, path));
+    CHECK(table_find(&restored, 1)->status == CLINIC_REGISTERED);
+    clinic_free(&original); clinic_free(&restored); CHECK(!remove(path)); ++suites;
 }
 static void persistence(void) {
     const char *path = "build/test-clinic.db";
@@ -312,6 +345,6 @@ static void persistence(void) {
     clinic_free(&c); clinic_free(&restored); remove(path); ++suites;
 }
 int main(void) {
-    awaiting_triage(); registration_severity(); registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); persistence();
+    awaiting_triage(); registration_severity(); registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); persistence_status_collision(); persistence();
     printf("PASS: %u suites, %u checks\n", suites, checks); return EXIT_SUCCESS;
 }

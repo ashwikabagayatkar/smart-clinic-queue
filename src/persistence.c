@@ -118,7 +118,7 @@ static bool parse_patient(Clinic *c, char **s, size_t n, bool supports_pending) 
     if ((status == WAITING || status == CONSULTING) && review) return false;
     time_t when;
     if (!timestamp(checked, &when)) return false;
-    if ((status == REGISTERED || pending) ? (order || checked) : (!severity || !order)) return false;
+    if ((status == CLINIC_REGISTERED || pending) ? (order || checked) : (!severity || !order)) return false;
     Patient *p = pending ? clinic_register_pending(c, s[2], (unsigned)age) : clinic_register(c, s[2], (unsigned)age, (unsigned)severity);
     if (!p) return false;
     /* clinic_register builds both indexes; move the new patient to its stored ID bucket. */
