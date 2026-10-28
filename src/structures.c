@@ -123,7 +123,7 @@ void history_append(Clinic *c, Visit *v) {
 bool undo_push(Clinic *c, const Patient *p) {
     Undo *u = malloc(sizeof *u);
     if (!u) return false;
-    *u = (Undo){p->id, p->order, p->order, p->status, p->severity, p->checked_in, c->undo};
+    *u = (Undo){p->id, p->order, p->order, p->status, p->severity, p->checked_in, p->needs_review, c->undo};
     c->undo = u; return true;
 }
 void undo_free(Undo *u) { while (u) { Undo *next = u->next; free(u); u = next; } }

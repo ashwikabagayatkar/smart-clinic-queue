@@ -67,6 +67,38 @@ bool clinic_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
 bool clinic_review_checkin(Clinic *c, uint64_t id, unsigned severity, time_t now) {
     return checkin(c, id, severity, now, true);
 }
+/* Reprioritization keeps the original arrival identity and does not check in again. */
+static bool normal_insert_by_order(Queue *q, Patient *p) {
+    QueueNode *node = malloc(sizeof *node);
+    if (!node) return false;
+    QueueNode **link = &q->head;
+    while (*link && (*link)->patient->order < p->order) link = &(*link)->next;
+    node->patient = p; node->next = *link; *link = node;
+    if (!node->next) q->tail = node;
+    ++q->size; return true;
+}
+bool clinic_reprioritize(Clinic *c, uint64_t id, unsigned severity) {
+    Patient *p = table_find(c, id);
+    if (!p || p->status != WAITING || severity < 1 || severity > 4) return false;
+    unsigned old = p->severity;
+    if (old == severity) return true;
+    if (old < 4 && severity < 4) {
+        /* Existing heap capacity suffices after removal; no allocation is needed. */
+        if (!heap_remove(&c->urgent, id)) return false;
+        p->severity = severity; return heap_push(&c->urgent, p);
+    }
+    /* Allocate the destination node/storage before changing the source queue. */
+    p->severity = severity;
+    bool added = severity < 4 ? heap_push(&c->urgent, p) : normal_insert_by_order(&c->normal, p);
+    if (!added) { p->severity = old; return false; }
+    bool removed = old < 4 ? heap_remove(&c->urgent, id) : queue_remove(&c->normal, id);
+    if (!removed) {
+        if (severity < 4) (void)heap_remove(&c->urgent, id);
+        else (void)queue_remove(&c->normal, id);
+        p->severity = old; return false;
+    }
+    return true;
+}
 Patient *clinic_next(Clinic *c) {
     if (c->active) return NULL;
     Patient *p = c->urgent.size ? heap_pop(&c->urgent) : queue_pop(&c->normal);
@@ -106,6 +138,7 @@ bool clinic_undo(Clinic *c) {
             p->status = u->previous_status; p->severity = u->previous_severity;
             p->checked_in = u->previous_checkin;
             p->order = u->previous_order;
+            p->needs_review = u->previous_needs_review;
         }
     }
     free(u); return ok;

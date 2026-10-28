@@ -28,7 +28,7 @@ static void awaiting_triage(void) {
     CHECK(clinic_review_checkin(&c, p->id, 2, 101));
     CHECK(p->severity == 2 && p->status == WAITING);
     CHECK(clinic_undo(&c));
-    CHECK(p->status == AWAITING_TRIAGE && p->severity == UNASSIGNED_PRIORITY);
+    CHECK(p->status == AWAITING_TRIAGE && p->severity == UNASSIGNED_PRIORITY && p->needs_review);
     CHECK(clinic_review_checkin(&c, p->id, 4, 102));
     CHECK(!p->needs_review);
     CHECK(clinic_next(&c) == p); CHECK(clinic_complete(&c, 110));
@@ -262,6 +262,37 @@ static void dsa_edges(void) {
 static void write_file(const char *path, const char *text) {
     FILE *f = fopen(path, "w"); CHECK(f); CHECK(fputs(text, f) >= 0); CHECK(!fclose(f));
 }
+static void reprioritization(void) {
+    Clinic c, restored; clinic_init(&c); clinic_init(&restored);
+    Patient *a=reg(&c,"First Fictional"), *b=reg(&c,"Second Fictional"), *d=reg(&c,"Third Fictional");
+    CHECK(!clinic_reprioritize(&c,a->id,2));
+    CHECK(clinic_checkin(&c,a->id,2,100));
+    CHECK(clinic_checkin(&c,b->id,4,101));
+    CHECK(clinic_checkin(&c,d->id,2,102));
+    uint64_t counter=c.next_order;
+    CHECK(!clinic_reprioritize(&c,999,1));
+    CHECK(!clinic_reprioritize(&c,a->id,0)); CHECK(!clinic_reprioritize(&c,a->id,5));
+    CHECK(clinic_reprioritize(&c,a->id,1)); CHECK(c.urgent.items[0]==a);
+    CHECK(clinic_reprioritize(&c,a->id,4));
+    CHECK(c.normal.head->patient==a && c.normal.tail->patient==b);
+    CHECK(clinic_reprioritize(&c,b->id,2));
+    CHECK(c.urgent.items[0]==b); /* order 2 before order 3 */
+    CHECK(clinic_reprioritize(&c,b->id,4));
+    CHECK(c.normal.head->patient==a && c.normal.tail->patient==b);
+    CHECK(clinic_reprioritize(&c,b->id,4));
+    CHECK(c.normal.size==2 && c.urgent.size==1 && c.next_order==counter);
+    CHECK(a->order==1 && a->checked_in==100 && b->order==2 && b->checked_in==101);
+    CHECK(!c.history_head);
+    CHECK(clinic_save(&c,"build/reprioritize.db")); CHECK(clinic_load(&restored,"build/reprioritize.db"));
+    CHECK(clinic_next(&restored)->id==d->id); CHECK(clinic_complete(&restored,110));
+    CHECK(clinic_next(&restored)->id==a->id); CHECK(!clinic_reprioritize(&restored,a->id,1));
+    CHECK(clinic_complete(&restored,111)); CHECK(!clinic_reprioritize(&restored,a->id,1));
+    CHECK(clinic_next(&restored)->id==b->id);
+    /* Reprioritization never adds another undo operation. */
+    CHECK(clinic_undo(&c)); CHECK(d->status==CLINIC_REGISTERED);
+    CHECK(c.normal.size==2 && !c.urgent.size);
+    clinic_free(&c); clinic_free(&restored); CHECK(!remove("build/reprioritize.db")); ++suites;
+}
 /* Regression: Windows defines REGISTERED as 4, which used to corrupt the
    loader's status-0/status-4 validation. Test both records independently. */
 static void persistence_status_collision(void) {
@@ -345,6 +376,6 @@ static void persistence(void) {
     clinic_free(&c); clinic_free(&restored); remove(path); ++suites;
 }
 int main(void) {
-    awaiting_triage(); registration_severity(); registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); persistence_status_collision(); persistence();
+    awaiting_triage(); registration_severity(); registration_and_indexes(); heap_and_fifo(); workflow(); undo_visits(); sorts(); dsa_edges(); reprioritization(); persistence_status_collision(); persistence();
     printf("PASS: %u suites, %u checks\n", suites, checks); return EXIT_SUCCESS;
 }

@@ -13,7 +13,8 @@ CLINIC_EXPORT void app_close(void *context);
    Actions: 0 state, 1 register, 2 checkin, 3 next, 4 complete, 5 no-show,
    6 latest eligible undo, 7 save, 8 load, 9 ID search, 10 name search,
    11 reports, 12 register and check in; internal actions 13 pending registration,
-   14 staff-reviewed check-in, 15 require review. Mutation successes are autosaved;
+   14 explicit-priority assignment/check-in (automatic or reviewed), 15 require review,
+   16 reprioritize the same waiting visit. Mutation successes are autosaved;
    failures restore the entire prior state, including undo. */
 CLINIC_EXPORT char *app_call(void *context, unsigned action, const char *name,
                             uint64_t id, unsigned age, unsigned severity,

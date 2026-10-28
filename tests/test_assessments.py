@@ -34,16 +34,16 @@ class AssessmentTests(unittest.TestCase):
         self.assertEqual(self.http('POST','/api/action',{'action':'register','name':'No','age':20,'severity':1},headers={'X-Clinic-Token':self.public_token})[0],403)
         self.assertEqual(self.http('POST','/api/login',{'pin':'00000000' if self.server.staff_pin!='00000000' else '11111111'},headers={'X-Clinic-Token':self.public_token})[0],403)
         self.assertEqual(self.http('POST','/api/login',{'pin':'éééééééé'},headers={'X-Clinic-Token':self.public_token})[0],403)
-        for action in ['register_pending','review_checkin','require_review']:
+        for action in ['register_pending','review_checkin','require_review','reprioritize']:
             self.call(action,expected=403)
         self.assertEqual(self.http('GET','/patient')[0],200)
-        self.assertEqual(self.http('GET','/api/catalog')[1]['version'],'demo-2026-01')
+        self.assertEqual(self.http('GET','/api/catalog')[1]['version'],'demo-2026-02')
 
-    def test_new_patient_stays_unassigned_until_review(self):
+    def test_new_patient_is_automatically_queued_before_optional_review(self):
         body=self.submission();receipt=self.public('submit',body)
         state=self.call('state')['state'];p=state['patients'][0]
-        self.assertIsNone(p['severity']);self.assertEqual(p['status'],'Awaiting triage');self.assertEqual(state['queue'],[])
-        self.assertIn('|none|5|',self.path.read_text(encoding="utf-8"))
+        self.assertEqual(p['severity'],4);self.assertEqual(p['status'],'Waiting');self.assertEqual(len(state['queue']),1)
+        self.assertIn('|4|1|',self.path.read_text(encoding="utf-8"))
         self.call('checkin',id=p['id'],severity=4,expected=409)
         result=self.review(receipt)
         self.assertEqual(result['state']['queue'][0]['severity'],4)
@@ -63,7 +63,7 @@ class AssessmentTests(unittest.TestCase):
         data=self.call('state');self.assertEqual(len(data['state']['patients']),2)
         self.assertEqual(data['assessments'][0]['patient_name'],'Existing A')
         self.call('checkin',id='01',severity=2,expected=409)
-        self.assertTrue(self.server.engine.call({'action':'state'})['state']['patients'][0]['needs_review'])
+        self.assertFalse(self.server.engine.call({'action':'state'})['state']['patients'][0]['needs_review'])
         self.assertFalse(self.server.engine.call({'action':'checkin','id':'1','severity':2})['ok'])
         self.public('identify',identity,400)
         self.assertEqual(self.public('submit',body)['reference'],receipt['reference'])
@@ -83,13 +83,13 @@ class AssessmentTests(unittest.TestCase):
     def test_incomplete_and_emergency_assessments_alert_staff(self):
         body=self.submission();body['answers']={'warnings':{'heavy_bleeding':'yes'}}
         receipt=self.public('submit',body);self.assertTrue(receipt['evaluation']['emergency'])
-        self.assertIsNone(receipt['evaluation']['suggested_priority'])
+        self.assertEqual(receipt['evaluation']['suggested_priority'],1)
         assessment=self.call('state')['assessments'][0]
-        self.assertTrue(assessment['evaluation']['warning_flags']);self.assertEqual(assessment['status'],'pending')
-        self.review(receipt,priority=1,expected=400)
+        self.assertTrue(assessment['evaluation']['warning_flags']);self.assertEqual(assessment['status'],'automatic')
+        self.review(receipt,priority=2,expected=400)
         result=self.review(receipt,priority=1,reason='Staff assessed warning and arranged immediate care')
         self.assertEqual(result['state']['queue'][0]['severity'],1)
-        self.assertTrue(result['assessments'][0]['review']['overridden'])
+        self.assertFalse(result['assessments'][0]['review']['overridden'])
 
     def test_staff_override_reason_and_patient_association(self):
         receipt=self.public('submit',self.submission())
@@ -102,22 +102,22 @@ class AssessmentTests(unittest.TestCase):
         self.assertEqual(assessment['review']['priority'],2)
         self.assertTrue(assessment['review']['overridden'])
 
-    def test_c_heap_fairness_uses_staff_review_arrival_order(self):
+    def test_c_heap_fairness_preserves_submission_arrival_order_during_overrides(self):
         a=self.public('submit',self.submission('First Fictional'));b=self.public('submit',self.submission('Second Fictional'))
         c=self.public('submit',self.submission('Third Fictional'))
         self.review(b,2,'Staff choice');self.review(a,2,'Staff choice');data=self.review(c,1,'Staff choice')
-        self.assertEqual([p['id'] for p in data['state']['queue']],['3','2','1'])
+        self.assertEqual([p['id'] for p in data['state']['queue']],['3','1','2'])
         self.assertEqual([p['order'] for p in data['state']['queue']],['3','1','2'])
         self.stop();self.start()
-        self.assertEqual([p['id'] for p in self.call('state')['state']['queue']],['3','2','1'])
+        self.assertEqual([p['id'] for p in self.call('state')['state']['queue']],['3','1','2'])
 
     def test_c_fifo_and_undo_restore_explicit_unassigned_state(self):
         a=self.public('submit',self.submission('First Fictional'));b=self.public('submit',self.submission('Second Fictional'))
         self.review(b);result=self.review(a)
-        self.assertEqual([p['id'] for p in result['state']['queue']],['2','1'])
+        self.assertEqual([p['id'] for p in result['state']['queue']],['1','2'])
         result=self.call('undo')
-        self.assertIsNone(result['state']['patients'][0]['severity'])
-        self.assertEqual(result['state']['patients'][0]['status'],'Awaiting triage')
+        self.assertIsNone(result['state']['patients'][1]['severity'])
+        self.assertEqual(result['state']['patients'][1]['status'],'Awaiting triage')
         self.assertEqual(result['assessments'][0]['status'],'reviewed') # Historical staff decision is not erased.
 
     def test_sidecar_save_failure_rolls_back_new_patient_and_review(self):
@@ -127,8 +127,8 @@ class AssessmentTests(unittest.TestCase):
         self.assertFalse(self.server.assessments.journal.exists());self.assertEqual(blocker.read_text(encoding="utf-8"),'preserve')
         blocker.unlink();receipt=self.public('submit',body)
         before=self.call('state')['state'];blocker.write_text('preserve')
-        self.review(receipt,expected=500)
-        result=self.call('state');self.assertEqual(result['state'],before);self.assertEqual(result['assessments'][0]['status'],'pending')
+        self.review(receipt,2,"Rollback mutation",expected=500)
+        result=self.call('state');self.assertEqual(result['state'],before);self.assertEqual(result['assessments'][0]['status'],'automatic')
         blocker.unlink();self.review(receipt)
 
     def test_prepared_crash_journal_recovers_both_files_on_restart(self):
@@ -150,7 +150,7 @@ class AssessmentTests(unittest.TestCase):
         self.stop();self.start()
         records=self.call('state')['assessments']
         self.assertEqual([a['patient_id'] for a in records],['1','2'])
-        self.assertEqual([a['status'] for a in records],['pending','reviewed'])
+        self.assertEqual([a['status'] for a in records],['automatic','reviewed'])
         self.assertEqual(records[1]['review']['override_reason'],'Staff override')
         self.assertEqual(records[0]['reference'],first['reference'])
 
@@ -163,7 +163,7 @@ class AssessmentTests(unittest.TestCase):
         self.assertFalse(self.call('state')['state']['patients'][0]['needs_review'])
         blocker.unlink();self.public('identify',body['identity'])
         self.public('submit',body)
-        self.assertTrue(self.call('state')['state']['patients'][0]['needs_review'])
+        self.assertFalse(self.call('state')['state']['patients'][0]['needs_review'])
 
     def test_replacement_and_expired_intake_codes(self):
         self.register('Existing Code Fictional',4,'register')
@@ -199,7 +199,7 @@ class AssessmentTests(unittest.TestCase):
         self.path=folder/'patient records.db';self.start()
         body=self.submission('Zoë Fictional');body['answers']['additional']='Fictional note: symptômes / 症状'
         receipt=self.public('submit',body)
-        self.assertIsNone(receipt['evaluation']['suggested_priority'])
+        self.assertEqual(receipt['evaluation']['suggested_priority'],3)
         self.review(receipt,2,'Staff reviewed the fictional notes')
         self.stop();self.start()
         result=self.call('state')
@@ -217,3 +217,82 @@ class AssessmentTests(unittest.TestCase):
         body=self.submission();body['answers']['symptoms']=['invented'];self.public('submit',body,400)
         body=self.submission();body['identity']['id']='99';self.public('submit',body,400)
         self.assertEqual(self.call('state')['state']['patients'],[])
+
+    def test_preview_receipt_queue_and_restart_have_the_same_decision(self):
+        body=self.submission();body['answers']={'symptoms':['headache','cough'],'pain_level':5}
+        preview=self.public('preview',body['answers'])['evaluation']
+        receipt=self.public('submit',body)
+        self.assertEqual(receipt['evaluation'],preview)
+        state=self.call('state');self.assertEqual(state['state']['queue'][0]['severity'],preview['suggested_priority'])
+        self.assertEqual(state['assessments'][0]['evaluation'],preview)
+        self.stop();self.start()
+        self.assertEqual(self.call('state')['assessments'][0]['evaluation'],preview)
+        self.assertEqual(len(self.call('state')['state']['queue']),1)
+        self.public('submit',body);self.assertEqual(len(self.call('state')['state']['queue']),1)
+
+    def test_automatic_fallback_and_equal_priority_submission_fairness(self):
+        for name in ['First Fictional','Second Fictional','Third Fictional']:
+            body=self.submission(name);body['answers']={}
+            result=self.public('submit',body)
+            self.assertEqual(result['evaluation']['suggested_priority'],3)
+            self.assertEqual(result['evaluation']['confidence'],'low')
+        self.assertEqual([p['id'] for p in self.call('state')['state']['queue']],['1','2','3'])
+        self.stop();self.start()
+        self.assertEqual([p['id'] for p in self.call('state')['state']['queue']],['1','2','3'])
+
+    def test_repeated_overrides_cannot_duplicate_or_touch_another_visit(self):
+        a=self.public('submit',self.submission('First Fictional'))
+        b=self.public('submit',self.submission('Second Fictional'))
+        original=self.call('state')['state'];order=original['patients'][0]['order']
+        self.review(a,2,'New concern')
+        result=self.review(a,4,'Concern resolved')
+        self.assertEqual([p['id'] for p in result['state']['queue']],['1','2'])
+        self.assertEqual(result['state']['patients'][0]['order'],order)
+        self.assertEqual(len(result['assessments'][0]['review_history']),1)
+        self.call('next');self.review(a,1,'Too late',expected=409)
+        self.call('complete');self.call('checkin',id='1',severity=3)
+        self.review(a,1,'Old assessment must not alter new visit',expected=409)
+        self.assertEqual(len(self.call('state')['state']['queue']),2)
+        self.assertEqual(b['patient_id'],'2')
+
+    def test_legacy_pending_records_still_require_explicit_review(self):
+        # Existing saved assessments must not be silently reevaluated or auto-admitted.
+        receipt=self.public('submit',self.submission())
+        self.call('undo')
+        data=json.loads(self.server.assessments.path.read_text(encoding='utf-8'))
+        data['assessments'][0]['status']='pending'
+        data['assessments'][0]['evaluation']['suggested_priority']=None
+        self.server.assessments.path.write_text(json.dumps(data),encoding='utf-8')
+        self.stop();self.start()
+        self.assertEqual(self.call('state')['state']['queue'],[])
+        result=self.review(receipt,2,'Legacy assessment reviewed')
+        self.assertEqual(result['state']['queue'][0]['severity'],2)
+
+    def test_c_snapshot_failure_rolls_back_automatic_admission_and_override(self):
+        blocker=Path(str(self.path)+'.tmp');blocker.write_text('preserve')
+        body=self.submission();self.public('submit',body,409)
+        self.assertEqual(self.call('state')['state']['patients'],[])
+        self.assertEqual(blocker.read_text(),'preserve');blocker.unlink()
+        receipt=self.public('submit',body);before=self.call('state')
+        blocker.write_text('preserve');self.review(receipt,2,'Snapshot rollback',expected=409)
+        after=self.call('state');self.assertEqual(after['state'],before['state'])
+        self.assertEqual(after['assessments'],before['assessments'])
+        self.assertEqual(blocker.read_text(),'preserve');blocker.unlink()
+
+    def test_every_rule_preview_matches_automatic_c_queue_and_saved_explanation(self):
+        expected=[]
+        for index,rule in enumerate(self.server.assessments.rules.data['rules']):
+            body=self.submission('Rule Fictional '+str(index),index)
+            preview=self.public('preview',body['answers'])['evaluation']
+            receipt=self.public('submit',body)
+            self.assertEqual(receipt['evaluation'],preview)
+            self.assertEqual(preview['suggested_priority'],rule['priority'])
+            patient=next(p for p in self.call('state')['state']['patients'] if p['id']==receipt['patient_id'])
+            self.assertEqual(patient['severity'],preview['suggested_priority'])
+            expected.append((patient['severity'],int(patient['order']),patient['id']))
+        actual=self.call('state')
+        self.assertEqual([p['id'] for p in actual['state']['queue']],[entry[2] for entry in sorted(expected)])
+        self.assertEqual({p['severity'] for p in actual['state']['queue']},{1,2,3,4})
+        self.stop();self.start()
+        self.assertEqual(self.call('state')['assessments'],actual['assessments'])
+        self.assertEqual(self.call('state')['state']['queue'],actual['state']['queue'])

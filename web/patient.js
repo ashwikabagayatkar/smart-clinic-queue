@@ -10,14 +10,17 @@ async function api(path,body) {
 }
 function showError(message) { $('#patient-error').textContent=message; $('#patient-error').scrollIntoView({block:'center',behavior:'smooth'}); }
 function question(label,key,kind,value) { return `<label>${escapeText(label)}<select data-question="${escapeText(key)}" data-kind="${kind}"><option value="">Choose / unanswered</option>${['yes','no','unsure'].map(v=>`<option value="${v}" ${v===value?'selected':''}>${{yes:'Yes',no:'No',unsure:'I’m not sure'}[v]}</option>`).join('')}</select></label>`; }
+const expandedCategories=new Set();
 function symptoms() {
   const search=$('#symptom-search').value.toLowerCase(),groups=new Map();
   for(const symptom of catalog.symptoms) {
     if(!`${symptom.label} ${symptom.category}`.toLowerCase().includes(search)) continue;
     if(!groups.has(symptom.category)) groups.set(symptom.category,[]);groups.get(symptom.category).push(symptom);
   }
-  $('#symptom-list').innerHTML=[...groups].map(([category,items])=>`<section class="symptom-category"><h3>${escapeText(category)}</h3><div class="symptom-choices">${items.map(s=>`<label><input type="checkbox" data-symptom="${s.id}" ${selected.has(s.id)?'checked':''}>${escapeText(s.label)}</label>`).join('')}</div></section>`).join('')||'<p>No matching symptoms. Clear the search or choose “Something else”.</p>';
-  $('#symptom-selection').textContent=`${selected.size} selected. Filtering does not clear your selections.`;
+  $('#symptom-list').innerHTML=[...groups].map(([category,items])=>`<details class="symptom-category" ${search||expandedCategories.has(category)?'open':''} data-category="${escapeText(category)}"><summary>${escapeText(category)} <span>${items.filter(s=>selected.has(s.id)).length} selected · ${items.length} options</span></summary><div class="symptom-choices">${items.map(s=>`<label><input type="checkbox" data-symptom="${s.id}" ${selected.has(s.id)?'checked':''}>${escapeText(s.label)}</label>`).join('')}</div></details>`).join('')||'<p>No matching symptoms. Clear the search or choose “Other symptoms” in General symptoms.</p>';
+  for(const section of document.querySelectorAll('details[data-category]'))section.addEventListener('toggle',()=>{if(section.open)expandedCategories.add(section.dataset.category);else expandedCategories.delete(section.dataset.category);});
+  $('#symptom-selection').textContent=`${selected.size} selected. Select all symptoms that apply; filtering does not clear selections.`;
+  $('#other-symptoms-field').hidden=!selected.has('other');
 }
 function moreDetails() {
   $('#warning-questions').innerHTML=catalog.warnings.map(w=>question(w.label,w.id,'warning',warnings[w.id])).join('');
@@ -26,10 +29,10 @@ function moreDetails() {
 function answers() {
   const unit=$('#duration-unit').value,value=$('#duration-value').value;
   return {symptoms:[...selected],followups:Object.fromEntries(Object.entries(followups).filter(([k])=>selected.has(k.split('.')[0]))),warnings:{...warnings},other_listed_absent:$('#other-absent').value==='yes'?true:$('#other-absent').value==='unsure'?false:null,
-    duration:unit||value!==''?{unit:unit||null,value:value===''?null:Number(value)}:null,self_severity:$('#self-severity').value||null,additional:$('#additional-symptoms').value};
+    duration:unit||value!==''?{unit:unit||null,value:value===''?null:Number(value)}:null,self_severity:$('#self-severity').value||null,pain_level:$('#pain-level').value===''?null:Number($('#pain-level').value),additional:selected.has('other')?$('#additional-symptoms').value:''};
 }
 function emergencyNow() {
-  let flag=Object.values(warnings).includes('yes');
+  let flag=Object.values(warnings).includes('yes')||catalog.rules.some(r=>r.emergency&&r.any_symptoms?.some(id=>selected.has(id)));
   for(const s of catalog.symptoms) if(selected.has(s.id)) for(const f of s.followups) if(f.emergency_when&&followups[`${s.id}.${f.id}`]===f.emergency_when) flag=true;
   const firstWarning=flag&&$('#patient-emergency').hidden;
   $('#patient-emergency').hidden=!flag;
@@ -42,10 +45,14 @@ function drawStep() {
   $('#patient-error').textContent=''; $('#patient-main').scrollIntoView({block:'start',behavior:'smooth'});
 }
 function reviewMarkup(a) {
-  const rows=[['Patient',`${person.name} · ${person.age} years · ${person.id?`ID ${person.id}`:'New registration'}`],['Symptoms',catalog.symptoms.filter(s=>selected.has(s.id)).map(s=>s.label).join(', ')||'Not provided'],['Other listed symptoms',a.other_listed_absent===true?'Explicitly reported absent':'Not confirmed / unsure'],['Duration',a.duration?`${a.duration.value??'Unanswered'} ${a.duration.unit??'(unit unanswered)'}`:'Not provided / unsure'],['How you feel',a.self_severity||'Not provided'],['Additional symptoms',a.additional||'No additional text entered']];
+  const rows=[['Patient',`${person.name} · ${person.age} years · ${person.id?`ID ${person.id}`:'New registration'}`],['Symptoms',catalog.symptoms.filter(s=>selected.has(s.id)).map(s=>s.label).join(', ')||'Not provided'],['Other listed symptoms',a.other_listed_absent===true?'Explicitly reported absent':'Not confirmed / unsure'],['Duration',a.duration?`${a.duration.value??'Unanswered'} ${a.duration.unit??'(unit unanswered)'}`:'Not provided / unsure'],['How you feel',a.self_severity||'Not provided'],['Pain level',a.pain_level??'Not provided'],['Other symptoms',a.additional||'No additional text entered']];
   for(const w of catalog.warnings) rows.push([w.label,a.warnings[w.id]||'Unanswered']);
   for(const s of catalog.symptoms) if(selected.has(s.id)) for(const f of s.followups) rows.push([s.label+': '+f.label,a.followups[`${s.id}.${f.id}`]||'Unanswered']);
   return `<dl class="review-list">${rows.map(([k,v])=>`<div><dt>${escapeText(k)}</dt><dd>${escapeText(v)}</dd></div>`).join('')}</dl>`;
+}
+function calculation(e) {
+  const selectedLabels=e.selected_symptoms.map(id=>catalog.symptoms.find(s=>s.id===id)?.label||id);
+  return `<strong>Preliminary priority: ${e.suggested_priority} — ${escapeText(e.label)}</strong><p>${escapeText(e.explanation)}</p><details open><summary>How priority was calculated</summary><p>Selected symptoms: ${escapeText(selectedLabels.join(', ')||'None reported')}</p><p>Matched rules: ${escapeText(e.rule_ids.join(', ')||'None — Priority (3) fallback')}</p><p>Deciding rules: ${escapeText(e.winning_rule_ids.join(', ')||'Conservative fallback')}</p><p>Uncertainty: ${escapeText(e.uncertainty_flags.join(' ')||'No additional flags; still an unvalidated demonstration.')}</p><p>Confidence: ${escapeText(e.confidence)} · Dataset: ${escapeText(e.dataset_version)}</p></details><p>Not a diagnosis or a guarantee that waiting is safe. Staff may override this preliminary result.</p>${e.emergency?`<div class="emergency-warning"><strong>Get emergency help now.</strong>${escapeText(e.emergency_instruction)}</div>`:''}`;
 }
 async function run(operation) {
   if(busy)return;busy=true;for(const b of document.querySelectorAll('button'))b.disabled=true;
@@ -62,7 +69,7 @@ $('#patient-next').addEventListener('click',()=>run(async()=>{
   if(step===2) {
     const a=answers(),evaluation=(await api('/api/patient/preview',a)).evaluation;
     $('#patient-review').innerHTML=reviewMarkup(a);
-    $('#suggestion-preview').innerHTML=`<strong>Demonstration suggestion: ${escapeText(evaluation.label)}</strong><p>${escapeText(evaluation.explanation)}</p><p>Only staff can confirm a final priority. This suggestion does not add you to the queue.</p>`;
+    $('#suggestion-preview').innerHTML=calculation(evaluation);
   }
   step++;drawStep();
 }));
@@ -71,8 +78,10 @@ $('#patient-form').addEventListener('submit',e=>{e.preventDefault();run(async()=
   if(!$('#identity-confirmed').checked)throw new Error('Please confirm that the patient details and answers belong to you.');
   const receipt=await api('/api/patient/submit',{submission_id:submissionID,identity,identity_confirmed:true,answers:answers()});
   $('#patient-form').hidden=true;$('.progress-steps').hidden=true;$('#patient-receipt').hidden=false;
-  $('#receipt-details').innerHTML=`<dt>Assessment reference</dt><dd>${escapeText(receipt.reference)}</dd><dt>Your patient ID</dt><dd>${escapeText(receipt.patient_id)}</dd><dt>Review status</dt><dd>${receipt.status==='reviewed'?'Reviewed by staff':'Awaiting staff review'}</dd>`;
+  $('#receipt-details').innerHTML=`<dt>Assessment reference</dt><dd>${escapeText(receipt.reference)}</dd><dt>Your patient ID</dt><dd>${escapeText(receipt.patient_id)}</dd><dt>Review status</dt><dd>${receipt.status==='reviewed'?'Reviewed by staff':'Automatic preliminary priority'}</dd>`;
   $('#receipt-summary').textContent=receipt.message;
+  if(receipt.staff_priority) $('#receipt-summary').textContent+=` Staff-confirmed priority: ${receipt.staff_priority}. The calculation below is the original preliminary result.`;
+  $('#receipt-calculation').innerHTML=calculation(receipt.evaluation);
   $('#receipt-warning').hidden=!receipt.evaluation.emergency;
   $('#receipt-warning').textContent=receipt.evaluation.emergency_instruction;
   $('#patient-receipt').focus();

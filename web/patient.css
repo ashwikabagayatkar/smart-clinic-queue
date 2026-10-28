@@ -62,3 +62,9 @@ textarea { display:block; width:100%; font:inherit; padding:12px; border:1px sol
   .duration-fields { grid-template-columns:1fr; gap:0; }.review-list>div { grid-template-columns:1fr; gap:5px; }
   .patient-receipt { padding:25px; }
 }
+
+.symptom-category summary { cursor:pointer; padding:16px 10px; color:#355679; font-weight:650; border-bottom:1px solid var(--line); }
+.symptom-category summary span { display:block; font-size:12px; font-weight:400; margin-top:5px; }
+.symptom-category[open] .symptom-choices { padding-top:14px; }
+.symptom-category summary:focus-visible { outline:3px solid var(--blue); outline-offset:3px; }
+#receipt-calculation { text-align:left; }

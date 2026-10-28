@@ -164,7 +164,7 @@ void app_release(char *text) { free(text); }
 char *app_call(void *context, unsigned action, const char *name, uint64_t id,
                unsigned age, unsigned severity, unsigned key, unsigned algorithm) {
     App *app = context;
-    if (!app || !name || action > 15 || key > REPORT_SEVERITY || algorithm < 1 || algorithm > 2) return NULL;
+    if (!app || !name || action > 16 || key > REPORT_SEVERITY || algorithm < 1 || algorithm > 2) return NULL;
     Clinic *c = &app->clinic, backup;
     const char *message = "Up to date";
     bool ok = true, mutation = (action >= 1 && action <= 6) || action >= 12;
@@ -183,7 +183,8 @@ char *app_call(void *context, unsigned action, const char *name, uint64_t id,
     }
     case 13: ok = clinic_register_pending(c, name, age) != NULL; message = ok ? "Patient registered; awaiting staff triage" : "Invalid registration."; break;
     case 15: ok = clinic_require_review(c, id); message = ok ? "Patient awaits assessment review" : "Patient is already waiting or consulting."; break;
-    case 14: ok = clinic_review_checkin(c, id, severity, time(NULL)); message = ok ? "Staff priority confirmed; patient checked in" : "Patient cannot be queued in the current state."; break;
+    case 14: ok = clinic_review_checkin(c, id, severity, time(NULL)); message = ok ? "Explicit priority assigned; patient checked in" : "Patient cannot be queued in the current state."; break;
+    case 16: ok = clinic_reprioritize(c, id, severity); message = ok ? "Waiting priority updated; arrival order preserved" : "Only a waiting patient can be reprioritized (1–4)."; break;
     case 2: ok = clinic_checkin(c, id, severity, time(NULL)); message = ok ? "Patient checked in" : "Check-in requires an existing, non-waiting patient and severity 1–4."; break;
     case 3: ok = clinic_next(c) != NULL; message = ok ? "Consultation started" : "Queue is empty or a consultation is already active."; break;
     case 4: ok = clinic_complete(c, time(NULL)); message = ok ? "Consultation completed" : "No consultation can be completed."; break;

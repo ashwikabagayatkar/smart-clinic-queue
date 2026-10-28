@@ -1,12 +1,12 @@
 # Smart Clinic Queue & Triage Management System
 
-A responsive clinic application backed by real **C11 data structures**, with a separate patient-completed symptom assessment page and an authorized staff review inbox. Register patients with staff-assigned triage severity, manage a live queue and consultations, search records, inspect visit history, undo eligible check-ins, and generate reports using the C Merge Sort or Insertion Sort implementations. The original terminal interface is retained.
+A responsive clinic application backed by real **C11 data structures**, with a separate patient-completed symptom assessment page and an authorized staff review inbox. Register patients with an automatic preliminary priority or explicit staff-assigned severity, manage a live queue and consultations, search records, inspect visit history, undo eligible check-ins, and generate reports using the C Merge Sort or Insertion Sort implementations. The original terminal interface is retained.
 
-The web app runs locally. There is no cloud account, database server, frontend build system, CDN, or third-party runtime Python package. This is a college DSA project, not diagnostic software: staff must choose urgency; the demonstration rule engine never diagnoses or automatically assigns a final clinical priority.
+The web app runs locally. There is no cloud account, database server, frontend build system, CDN, or third-party runtime Python package. This is a college DSA project, not diagnostic software: automatic preliminary priority is an unvalidated demonstration, never a diagnosis or a guarantee that waiting is safe. Authorized staff can override a waiting patient’s priority.
 
 ## Patient self-assessment and staff review
 
-**Patients complete the checklist themselves.** The staff workspace does not ask staff to fill in patients’ symptom answers by default. Staff review the submitted answers, warning flags and transparent demonstration suggestion, then make the actual care-priority decision.
+**Patients complete the checklist themselves.** The staff workspace does not ask staff to fill in patients’ symptom answers by default. The backend immediately generates a preliminary priority and admits the patient to the real C queue. Staff review is optional and can override a waiting patient’s priority.
 
 Launch in Windows PowerShell:
 
@@ -27,33 +27,44 @@ For a different `--port`, use that port in the URL. On Linux the equivalent laun
 
 ### Patient steps
 
-1. **New patient:** choose “I’m a new patient” and enter your name and age. A unique C-generated patient ID is created atomically when you submit, not when you merely open the form. You are not assigned a clinical severity or added to the queue.
-2. **Existing patient:** staff find the correct patient in **Patients**, select **Patient form**, and give that patient their intake code or patient-specific link. Enter the ID and code on `/patient`. Codes are patient-bound, single-use, and expire after 24 hours; issuing a replacement invalidates an unused earlier code. A bare ID does not authorize access to another record. Verify the name/age in the review step; ask staff to resolve any mismatch before submission.
-3. Select symptoms with the searchable, categorized checkboxes. Filtering does not clear selections. Explicitly confirm whether you have checked the entire list; unchecked symptoms are **not** automatically treated as absent.
-4. Answer the relevant follow-ups and universal warning questions, provide duration and how severe symptoms feel to you, and add symptoms in your own words. “Unsure,” unanswered questions, and partially entered duration are retained as uncertain/incomplete; self-reported severity is not the final clinical priority.
-5. Review the patient details and all answers, confirm that they belong to you, and submit. Keep the **AS-… assessment reference** and patient ID from the confirmation screen. Submission does not enter a consultation queue.
+1. **New patient:** enter name and age. C generates a unique patient ID when submitting.
+2. **Existing patient:** obtain a patient-bound, single-use intake code/link from staff, then enter the ID and code. This identity check prevents attaching answers to someone else's record; it is not a requirement for staff triage. Codes expire after 24 hours. Waiting/consulting patients cannot submit another intake; tell staff directly about changed symptoms.
+3. Expand any of the ten categories or search the 64 symptoms. Select all checkboxes that apply. Filtering never clears selections. Unchecked symptoms remain unknown unless the whole-checklist confirmation is explicit. **Other symptoms** reveals an optional short note (300 characters in the UI).
+4. Warning questions, symptom-specific follow-ups, duration, self-reported severity and pain level are optional. Unanswered/unsure values stay unknown. Only a rule that actually requires an answer waits for that answer; other satisfied rules still apply. Text notes are stored for staff and add uncertainty; they are not interpreted automatically.
+5. Review the preliminary priority and **How priority was calculated**, confirm patient identity and submit. The response immediately shows priority 1–4, explanation, matched/deciding rule IDs, selected symptoms, uncertainty/confidence flags, dataset version and emergency instructions. The assessment and C queue entry are saved together. Keep the AS-… reference and patient ID.
 
-Emergency warnings show a prominent instruction to seek immediate emergency assistance and tell staff now. **Do not wait for this form, a rule result, or the consultation queue to get emergency help.** Emergency flags are retained even when the remainder of the assessment is incomplete or no rule matches.
+**Emergency instructions take precedence over the queue.** Seek immediate emergency assistance and tell clinic staff for warning signs; do not wait to complete the form or for a consultation call. This academic prototype does not establish that waiting is safe.
 
-Retries of the same immutable submission reference and answers return the same saved assessment instead of creating another patient/assessment. Conflicting reuse is rejected. The tab retains only its random submission ID, not symptom answers, in session storage. If a request times out, retry the unchanged form. Changing answers after an accepted request requires a new form/code; ask staff if you are uncertain whether a submission succeeded. Existing patients may have at most one pending assessment and cannot submit for another ID with their intake code.
+Identical UUID submission retries return the saved assessment without duplicate patients or queue entries, including after restart. Changed payloads with the same UUID are rejected. Session storage holds only that UUID. New-patient registration has no verified identity service: a user deliberately submitting fresh UUIDs as different registrations cannot be reliably deduplicated; existing patients require bound codes. Queue status on a retry is current, while the preliminary explanation remains the original frozen decision.
 
-### Staff steps
+### Optional staff review / override
 
-1. Open the staff dashboard at the root URL and sign in with the PIN printed in the launch terminal. The PIN is a **local prototype authorization gate**, not individual staff identity management. Failed sign-ins are rate-limited. Staff access tokens remain in page memory; reloading/signing out requires the PIN again. Keep staff and patient browsers/tabs separate and sign out before handing a device to a patient.
-2. **Patient assessments** shows the real pending/reviewed records. A live global warning banner alerts staff to patient-reported emergency flags (polling every five seconds while the page is visible). There are no email, SMS, operating-system, or closed-browser notifications; clinics must not rely on this prototype to monitor emergencies.
-3. Open an assessment. Verify the patient identity, read the actual symptom and follow-up answers (including explicit “Unanswered” values), free text, warning flags, suggested priority, rule explanation, rule IDs, source/review status and dataset version.
-4. Select the **final priority 1–4 explicitly**. It is not preselected from the suggestion. Enter the reviewing staff member’s name and confirm the review checkbox. A reason is mandatory when overriding a suggestion or assigning a priority where no unique rule matched.
-5. **Confirm priority & add to queue** saves the staff decision and calls the existing C review/check-in logic. Suggested priority remains separate from staff-confirmed priority and the override reason. Existing patients with pending assessments also have a persisted C review gate: ordinary check-in cannot bypass it.
-6. Equal-priority patients retain the C queue’s arrival order **at staff-confirmed queue admission**, not form-opening/submission time. Review B then A at the same priority to see B called first. Levels 1–3 use the binary min-heap; level 4 uses FIFO. No review can enqueue a patient twice.
-7. Undo removes an eligible check-in but retains the historical staff-review audit. If a new patient returns to “Awaiting triage” after undo, issue a fresh intake code/assessment to reassess; the old decision is not silently erased or reviewed twice.
+1. Sign in to the staff dashboard using the ephemeral local PIN printed in the launcher. This is a shared local prototype gate, not individual account management; keep the PIN private. Public patient tokens cannot access staff records/actions.
+2. **Patient assessments** lists automatic, legacy pending and reviewed records. Warning banners poll every five seconds while visible; there are no closed-browser, OS, SMS or email alerts. Do not rely on this prototype for emergency monitoring.
+3. Open an assessment and inspect identity, answers, warnings, preliminary priority, rule explanations, sources/version and uncertainty flags. Enter a final staff priority, reviewer name and confirmation. A reason is required when changing the preliminary suggestion.
+4. **Save staff priority** calls C `clinic_reprioritize` for the same waiting visit. It updates the real heap/FIFO membership, without a new admission, timestamp, visit number or undo entry. Original arrival order is preserved even when moving between priority lanes. Repeated staff changes retain previous decisions in `review_history`; the original automatic suggestion is never overwritten. Identical review retries are rejected without mutation.
+5. Consulting/completed/no-show records and assessments belonging to a different later visit cannot be changed through this workflow. Legacy `pending` assessments remain gated and require explicit review once to admit; upgrading does not silently reevaluate historical records.
+6. Undo uses the existing C stack, removing the latest eligible admission and restoring its prior priority/status/review flag. Assessment and review records remain historical. It does not automatically reenqueue a cancelled intake. Issue a fresh code/form to reassess an undone untriaged patient.
 
-### Transparent demonstration rules
+### Dataset and transparent demonstration rules
 
-`data/symptoms.json` contains the symptom categories, relevant follow-ups, universal warning questions, and four exact-condition rules. Each rule includes all required symptom/follow-up/warning conditions, duration bounds, self-reported severity, suggested priority, explanation, source and review status. The four scenarios demonstrate Critical, Urgent, Priority and Normal. There are **no symptom-count scores or unsupported numerical weights**.
+**Single source of truth:** `data/symptoms.json` (UTF-8 JSON), version `demo-2026-02`. It contains 64 symptom IDs/labels across Respiratory, Chest and circulation, Neurological, Fever and infection, Digestive, Urinary, Skin, Musculoskeletal, Pain, and General symptoms; optional follow-ups; warning questions; 16 rules; and an explicit level-3 fallback. `tools/triage.py` is the backend rule evaluator. There are no hardcoded C rule tables or browser-only medical decisions. The browser renders the same catalog from `/api/catalog`; preview and submit both use the same backend `RuleEngine.evaluate`. `tools/assessment_store.py` passes the selected priority through the existing ctypes bridge to the C check-in/queue implementation, which independently validates 1–4.
 
-All current rules are **demonstration-only, software-test-reviewed teaching rules — not clinically validated or clinically approved triage protocols**. Public emergency-advice URLs support the general warning messages, not validation of the exact priority rules. `demo_reviewed` means the software behavior was reviewed/tested; it does not mean a qualified clinician validated the rule. Do not deploy this dataset for real clinical decisions without a qualified clinical validation and governance process.
+Rules are **illustrative academic demonstrations, not clinically validated or clinically approved protocols**. `demo_reviewed` denotes software/test review only. Existing NHS URLs on warning questions support general emergency advice, not clinical validation of the exact priority mappings. Rules use honest synthetic-teaching source descriptions; no clinical references or weights are invented. Do not use this system for actual autonomous clinical triage.
 
-A suggestion appears only for one exact, software-reviewed demo rule when every relevant answer is explicit. Missing/uncertain answers, absent confirmation of other listed symptoms, unmatched or combined symptoms, extra free-text symptoms needing interpretation, unreviewed rules, and multiple matching rules return **“Staff assessment required.”** Warning flags always remain independent of a suggested priority. The rule engine runs in the backend; browser checkbox counts are only display feedback.
+Decision algorithm:
+
+1. Match only `demo_reviewed` rules. `symptoms` are all required; `any_symptoms` requires at least one listed selection. Extra selections do not block a match unless `exact_symptoms` is true. Every selected symptom participates in matching or is explicitly reported as uncovered.
+2. Compare only the rule's named `followups`, `warnings`, optional `self_severity`, optional duration bounds and optional whole-checklist confirmation. Missing/null/unsure never equals `yes` or `no`. Optional answers do not globally block the questionnaire.
+3. Evaluate emergency rules first and retain their warning instructions. Among all matching rules choose the smallest numerical priority (highest urgency); retain all matched IDs and identify the winning IDs. No symptom-count scores or weighted sums are used.
+4. If nothing matches, selected symptoms are uncovered, or free text needs interpretation, add a provisional level-3 fallback candidate with low confidence/insufficient-information flags. A more urgent matching rule still wins. A sparse/blank assessment never becomes Normal. Normal requires the explicit mild nasal-only pattern, comfortable breathing, no fever, negative warning answers and confirmed checklist; optional duration/pain are not required.
+5. Store the complete decision/explanation and dataset version alongside answers before returning success. C uses that same priority for queue order and reports. Staff decisions are separate audit fields, not replacements for the preliminary result.
+
+To add/modify a symptom or rule:
+
+1. Stop the server and back up real records separately. Edit the existing `data/symptoms.json`, keeping unique stable IDs and valid UTF-8. Add a symptom object with `id`, `label`, `category` and `followups` (possibly empty). Do not rename/remove IDs referenced by archived answers without a migration; startup validates those associations.
+2. Add a rule with unique `id`, `symptoms`, `any_symptoms`, `followups`, `warnings`, integer `priority` 1–4, plain-language `explanation`, truthful `source`, and `review_status`. Condition dictionaries should include only genuinely required answers. Follow-up keys are `symptom_id.question_id`. Use `emergency: true` only on priority-1 rules. Optional conditions are `self_severity`, `duration_hours: {"min":0,"max":72}`, `exact_symptoms`, and `requires_checklist_confirmation`. Do not add unsupported weights or assume unanswered conditions are negative.
+3. Keep new untested rules `unreviewed` (not used). Add representative positive/negative/missing/combined cases in `tests/test_triage.py`, then mark `demo_reviewed` only after software review. This never establishes clinical validation. Increment `version` and run `mingw32-make test` (Windows) or `make test` (Linux), plus browser tests if UI changed. Restart; archived decisions retain their original version/explanation.
 
 ### Assessment persistence and recovery
 
@@ -189,7 +200,7 @@ On Windows, replace `python3` with `py -3`. If using a system Chromium, set the 
 
 ## Workflow and severity rules
 
-Staff registration and staff check-in require an explicit final severity. Patient self-registration is different: it creates an **Awaiting triage** record with no clinical priority, never a default severity 0. Staff review must occur before queue admission. The existing categories are:
+Staff registration and staff check-in require an explicit final severity. Patient self-registration is different: it creates an **Awaiting triage** record with no clinical priority, never a default severity 0. The server immediately assigns the preliminary result and admits new submissions; only historical pending records require review. The existing categories are:
 
 | Value | Staff-assigned priority |
 | --- | --- |
@@ -198,7 +209,7 @@ Staff registration and staff check-in require an explicit final severity. Patien
 | 3 | Priority |
 | 4 | Normal |
 
-There is **no default selection** in the UI, and missing, zero, fractional, boolean, or out-of-range severities are rejected by the backend. The staff-confirmed severity is stored in the real `Patient` record and survives save/restart. Undo restores the prior severity or explicit unassigned state, never a numeric clinical severity 0. Names may contain at most 79 UTF-8 bytes, cannot be blank or contain controls/`|`; age is an integer 0–150. Patient IDs are generated monotonically by C, never entered at registration or reused. Duplicate names are allowed; exact-name search is case-sensitive. IDs travel as decimal strings through JSON to preserve all 64 bits.
+There is **no default selection** in the UI, and missing, zero, fractional, boolean, or out-of-range severities are rejected by the backend. The current automatic or staff-overridden severity is stored in the real `Patient` record and survives save/restart. Undo restores the prior severity or explicit unassigned state, never a numeric clinical severity 0. Names may contain at most 79 UTF-8 bytes, cannot be blank or contain controls/`|`; age is an integer 0–150. Patient IDs are generated monotonically by C, never entered at registration or reused. Duplicate names are allowed; exact-name search is case-sensitive. IDs travel as decimal strings through JSON to preserve all 64 bits.
 
 - **Overview:** real counts of waiting, critical/urgent waiting, and completed visits, plus queue preview, consultation room, recent history.
 - **Patients:** register with optional immediate check-in; search by ID through the C hash table or exact name through the C BST; check in an existing non-waiting patient; open individual history.
@@ -296,7 +307,7 @@ On Linux: `python3 tools/repair_severity.py clinic.db`. For each legacy record, 
 | Disconnected or expired session | Restart the server if necessary and refresh the browser; its session token changes on restart. |
 | Unicode/spaced paths | Native CLI uses `wmain`/UTF-8 conversion; persistence uses wide Windows file APIs. Unicode/spaced-path tests are present, but native Windows execution must still be verified. |
 
-This app has a local shared staff-PIN gate, not individual enterprise accounts. It has no multi-clinician scheduling, network deployment support, clinical decision engine, or regulatory certification. The BST is unbalanced, the hash has fixed 127 buckets, and transaction cloning/history validation are optimized for small college-demo datasets rather than large hospital workloads. Tests do not inject malloc failures or prove crash/power-loss durability. Native Windows execution remains an explicitly unverified platform check in this Linux environment.
+This app has a local shared staff-PIN gate, not individual enterprise accounts. It has no multi-clinician scheduling, network deployment support, validated clinical decision engine, or regulatory certification. The BST is unbalanced, the hash has fixed 127 buckets, and transaction cloning/history validation are optimized for small college-demo datasets rather than large hospital workloads. Tests do not inject malloc failures or prove crash/power-loss durability. Native Windows execution remains an explicitly unverified platform check in this Linux environment.
 
 ## Portability audit and remaining native checks
 
@@ -347,3 +358,23 @@ If the local fix branch already exists, use `git switch fix-windows-persistence`
 and `git pull --ff-only` instead of creating it again. Preserve any local edits
 before switching branches; no reset or database deletion is needed. The builder
 recompiles changed source/header inputs automatically.
+
+### Enhanced symptom triage verification
+
+For this feature, Linux `make all`, `make test` (11 C suites / 37,433 checks,
+C bridge tests, 54 Python tests passed and 3 native-Windows checks skipped),
+`make test-posix`, `make sanitize`, and both real-browser workflows passed.
+The strict MinGW cross-builds (CLI, DLL, core/bridge tests) and core/bridge test
+execution under Wine also passed. This preserves the Windows persistence regression
+coverage but does **not** establish native Windows compatibility. On Windows, stop
+the application, switch to `enhanced-symptom-triage`, then run:
+
+```powershell
+mingw32-make all
+mingw32-make test
+.\run.bat
+Start-Process "http://127.0.0.1:8765/patient"
+```
+
+`run.bat` stays running; open the patient page from a second PowerShell window.
+Use `--demo` for separate fictional records. No main-branch merge is needed to test.

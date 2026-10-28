@@ -77,14 +77,27 @@ class AssessmentStore:
         for a in data['assessments']:
             if (a['reference'] in refs or a['submission_id'] in submissions or a['patient_id'] not in patients
                     or a['patient_name']!=patients[a['patient_id']]['name'] or a['patient_age']!=patients[a['patient_id']]['age']
-                    or a['status'] not in ('pending','reviewed') or a['evaluation']['suggested_priority'] not in (None,1,2,3,4)):
+                    or a['status'] not in ('pending','automatic','reviewed') or a['evaluation']['suggested_priority'] not in (None,1,2,3,4)):
                 raise ValueError('Invalid patient-to-assessment association or duplicate assessment.')
+            priority=a['evaluation']['suggested_priority']
+            if priority is not None and (type(priority) is not int or priority not in (1,2,3,4)):
+                raise ValueError('Invalid stored preliminary priority.')
+            if a['status']=='automatic' and priority is None:
+                raise ValueError('Automatic assessments require a preliminary priority.')
+            if a['status']!='pending':
+                order=a.get('queue_order') or (a.get('review') or {}).get('queue_order')
+                if not isinstance(order,str) or not order.isascii() or not order.isdigit() or not 1<=int(order)<2**64:
+                    raise ValueError('Invalid assessment-to-visit association.')
+                patient=patients[a['patient_id']]
+                assigned=(a.get('review') or {}).get('priority',priority)
+                if patient['status']=='Waiting' and patient['order']==order and patient['severity']!=assigned:
+                    raise ValueError('Stored assessment priority does not match its C queue entry.')
             self.rules.validate(a['answers'])
             if a['status']=='pending':
                 if a['patient_id'] in pending: raise ValueError('Duplicate pending assessments.')
                 if not patients[a['patient_id']]['needs_review']: raise ValueError('Pending assessment is not gated in the C patient record.')
                 pending.add(a['patient_id'])
-            elif not a['review'] or type(a['review']['priority']) is not int or a['review']['priority'] not in (1,2,3,4):
+            elif a['status']=='reviewed' and (not a['review'] or type(a['review']['priority']) is not int or a['review']['priority'] not in (1,2,3,4)):
                 raise ValueError('Invalid staff review.')
             refs.add(a['reference']); submissions.add(a['submission_id'])
         for invitation in data['invitations'].values():
@@ -177,19 +190,25 @@ class AssessmentStore:
             else:
                 result=self.engine.call({'action':'require_review','id':p['id']})
                 if not result['ok']: raise Conflict(result['message'])
+            result=self.engine.call({'action':'review_checkin','id':p['id'],'severity':evaluation['suggested_priority']})
+            if not result['ok']: raise Conflict(result['message'])
+            queued=next(item for item in result['state']['patients'] if item['id']==p['id'])
             a={'reference':'AS-'+uuid.uuid4().hex[:16].upper(),'submission_id':body['submission_id'],'payload_digest':digest,
                'patient_id':p['id'],'patient_name':p['name'],'patient_age':p['age'],'answers':answers,'evaluation':evaluation,
-               'submitted_at':int(time.time()),'status':'pending','review':None}
+               'submitted_at':int(time.time()),'status':'automatic','review':None,'queue_order':queued['order'],'review_history':[]}
             self.data['assessments'].append(a)
             if body['identity']['kind']=='existing':
                 key=hashlib.sha256(body['identity']['code'].encode()).hexdigest(); self.data['invitations'][key]['used_reference']=a['reference']
             return self.receipt(a)
         return self.transaction(apply)
 
-    @staticmethod
-    def receipt(a):
+    def receipt(self, a):
+        patient=self.patient(a['patient_id'])
+        message=('Historical assessment awaits staff review before queue admission.' if a['status']=='pending' else
+                 'Assessment saved with a preliminary demonstration priority. Queue status: '+patient['status']+'. Staff may review or override; seek help immediately for warning signs.')
         return {'reference':a['reference'],'patient_id':a['patient_id'],'evaluation':a['evaluation'],'status':a['status'],
-                'message':'Assessment saved. Staff must review it before you can join the consultation queue.' if a['status']=='pending' else 'This assessment has already been reviewed. Ask clinic staff about your current care status.'}
+                'queue_status':patient['status'],'current_priority':patient['severity'],
+                'staff_priority':a['review']['priority'] if a.get('review') else None,'message':message}
 
     def review(self, body):
         if set(body)!={'action','reference','patient_id','priority','reviewer','override_reason'}: raise ValueError('Invalid review fields.')
@@ -199,13 +218,22 @@ class AssessmentStore:
         if not isinstance(reason,str) or len(reason)>500: raise ValueError('Override reason must be text of at most 500 characters.')
         a=next((a for a in self.data['assessments'] if a['reference']==body['reference']),None)
         if not a or a['patient_id']!=body['patient_id']: raise ValueError('Assessment reference and patient ID do not match.')
-        if a['status']!='pending': raise Conflict('Assessment already reviewed. It cannot enqueue the patient twice.')
+        patient=self.patient(a['patient_id'])
+        if a['status']!='pending':
+            order=a.get('queue_order') or (a.get('review') or {}).get('queue_order')
+            if patient['status']!='Waiting' or patient['order']!=order:
+                raise Conflict('This assessment no longer belongs to a waiting queue entry. No new check-in was created.')
+            if a.get('review') and a['review']['priority']==priority and a['review']['reviewer']==reviewer.strip() and a['review']['override_reason']==reason.strip():
+                raise Conflict('This staff decision has already been recorded.')
         if priority!=a['evaluation']['suggested_priority'] and not reason.strip():
             raise ValueError('Explain the staff decision when overriding a suggestion or assigning priority without a matching rule.')
         def apply():
-            result=self.engine.call({'action':'review_checkin','id':a['patient_id'],'severity':priority})
+            action='review_checkin' if a['status']=='pending' else 'reprioritize'
+            result=self.engine.call({'action':action,'id':a['patient_id'],'severity':priority})
             if not result['ok']: raise Conflict(result['message'])
             p=next(p for p in result['state']['patients'] if p['id']==a['patient_id'])
+            if a.get('review'): a.setdefault('review_history',[]).append(copy.deepcopy(a['review']))
+            a['queue_order']=p['order']
             a['status']='reviewed'; a['review']={'priority':priority,'reviewer':reviewer.strip(),'override_reason':reason.strip(),
                 'reviewed_at':int(time.time()),'queue_order':p['order'],'overridden':priority!=a['evaluation']['suggested_priority']}
             return result

@@ -22,7 +22,7 @@ def safe_token(value, expected):
 
 ACTIONS = {'state': 0, 'register': 1, 'checkin': 2, 'next': 3, 'complete': 4,
            'no_show': 5, 'undo': 6, 'save': 7, 'load': 8, 'find_id': 9,
-           'find_name': 10, 'report': 11, 'register_checkin': 12, 'register_pending':13, 'review_checkin':14, 'require_review':15}
+           'find_name': 10, 'report': 11, 'register_checkin': 12, 'register_pending':13, 'review_checkin':14, 'require_review':15, 'reprioritize':16}
 
 
 def integer(value, label, low, high):
@@ -139,9 +139,9 @@ class Engine:
             name = name_value(body.get('name'))
             age = integer(body.get('age'), 'Age', 0, 150)
             if action!='register_pending': severity = integer(body.get('severity'), 'Severity', 1, 4)
-        if action in {'checkin', 'review_checkin', 'require_review', 'no_show', 'find_id'}:
+        if action in {'checkin', 'review_checkin', 'require_review', 'reprioritize', 'no_show', 'find_id'}:
             allowed.add('id'); ident = patient_id(body.get('id'))
-        if action in {'checkin','review_checkin'}:
+        if action in {'checkin','review_checkin','reprioritize'}:
             allowed.add('severity'); severity = integer(body.get('severity'), 'Severity', 1, 4)
         if action == 'find_name':
             allowed.add('name'); name = name_value(body.get('name'))
@@ -269,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not isinstance(body,dict): raise ValueError('Send an action object.')
             action=body.get('action')
-            if action in ('register_pending','review_checkin','require_review'):
+            if action in ('register_pending','review_checkin','require_review','reprioritize'):
                 self.send(403,{'ok':False,'message':'Use the patient submission and staff assessment review workflow.'}); return
             if action=='invite_patient':
                 if set(body)!={'action','id'}: raise ValueError('Enter only the patient ID.')

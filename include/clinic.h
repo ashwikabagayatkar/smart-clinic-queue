@@ -39,6 +39,7 @@ typedef struct Undo {
     Status previous_status;
     unsigned previous_severity;
     time_t previous_checkin;
+    bool previous_needs_review;
     struct Undo *next;
 } Undo;
 typedef struct {
@@ -83,6 +84,7 @@ Patient *clinic_register_pending(Clinic *clinic, const char *name, unsigned age)
 bool clinic_require_review(Clinic *clinic, uint64_t id);
 bool clinic_review_checkin(Clinic *clinic, uint64_t id, unsigned severity, time_t now);
 bool clinic_checkin(Clinic *clinic, uint64_t id, unsigned severity, time_t now);
+bool clinic_reprioritize(Clinic *clinic, uint64_t id, unsigned severity);
 Patient *clinic_next(Clinic *clinic);
 bool clinic_complete(Clinic *clinic, time_t now);
 bool clinic_no_show(Clinic *clinic, uint64_t id, time_t now);
