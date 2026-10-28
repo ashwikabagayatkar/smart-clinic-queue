@@ -53,3 +53,26 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Local clinic build and runtime data
+/build/
+# Default/custom database snapshots, temporary files and backups (any directory)
+*.db
+*.db.*
+*.sqlite
+*.sqlite.*
+*.sqlite-*
+*.sqlite3
+*.sqlite3.*
+*.sqlite3-*
+
+# Local configuration and common credential/private-key files
+.env
+.env.*
+!.env.example
+!.env.sample
+secrets/
+credentials.json
+credentials.*.json
+*.pem
+*.key
