@@ -76,3 +76,12 @@ credentials.json
 credentials.*.json
 *.pem
 *.key
+
+# Python transport caches
+__pycache__/
+*.pyc
+.venv/
+
+# Patient assessment metadata and cross-file recovery journals (any database basename)
+*.assessments.json*
+*.intake-journal.json*

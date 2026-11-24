@@ -1,29 +1,57 @@
+# Native mingw32-make (cmd.exe) and Linux GNU Make share the same Python builder.
+# Strict C11/UTF-8/MinGW flags and .exe/.dll naming live in tools/build.py.
+.DEFAULT_GOAL := all
 CC = gcc
-CPPFLAGS = -Iinclude
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Werror -O2
-LDFLAGS =
+export CC
+PYTHON ?= python3
+EXE =
+SHARED_EXT = so
+ifeq ($(OS),Windows_NT)
+SHELL := cmd.exe
+.SHELLFLAGS := /d /c
+PYTHON = tools\python.bat
+EXE = .exe
+SHARED_EXT = dll
+endif
 CORE = src/structures.c src/clinic.c src/reports.c src/persistence.c
-OBJECTS = $(CORE:src/%.c=build/%.o)
-.PHONY: all test sanitize clean
-all: build/clinic
+HEADERS = include/clinic.h include/bridge.h
+.PHONY: all cli web test api-test test-posix sanitize clean run
+all: cli web
+cli:
+	$(PYTHON) tools/build.py cli
+web:
+	$(PYTHON) tools/build.py web
+# Aliases retain explicit artifact targets, but use the same build fingerprint.
+.PHONY: build/clinic$(EXE) build/clinic_core.$(SHARED_EXT) build/test_clinic$(EXE) build/test_bridge$(EXE)
+build/clinic$(EXE): cli
+build/clinic_core.$(SHARED_EXT): web
+build/test_clinic$(EXE):
+	$(PYTHON) tools/build.py test-core
+build/test_bridge$(EXE):
+	$(PYTHON) tools/build.py test-bridge
+run: all
+	$(PYTHON) tools/server.py
+test:
+	$(PYTHON) tools/test.py
+api-test: web
+	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
+test-posix: cli
+	$(PYTHON) tools/manage.py posix-test
+ifeq ($(OS),Windows_NT)
+sanitize:
+	$(PYTHON) tools/manage.py sanitize
+else
+SANFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -Iinclude
 build:
-	mkdir -p build
-build/%.o: src/%.c include/clinic.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
-build/clinic: $(OBJECTS) build/main.o
-	$(CC) $(LDFLAGS) $^ -o $@
-build/test_clinic: tests/test_clinic.c $(OBJECTS) include/clinic.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) tests/test_clinic.c $(OBJECTS) -o $@
-test: build/clinic build/test_clinic
-	./build/test_clinic
-	sh tests/cli.sh
-build/test_sanitize: tests/test_clinic.c $(CORE) include/clinic.h | build
-	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_clinic.c $(CORE) -o $@
-build/clinic_sanitize: src/main.c $(CORE) include/clinic.h | build
-	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer src/main.c $(CORE) -o $@
-sanitize: build/test_sanitize build/clinic_sanitize
-	ASAN_OPTIONS=detect_leaks=1 ./build/test_sanitize
-	ASAN_OPTIONS=detect_leaks=1 CLINIC_BIN=./build/clinic_sanitize sh tests/cli.sh
+	$(PYTHON) tools/manage.py mkdir build
+build/test_sanitize: tests/test_clinic.c $(CORE) $(HEADERS) | build
+	"$(CC)" $(SANFLAGS) tests/test_clinic.c $(CORE) -o "$@"
+build/clinic_sanitize: src/main.c $(CORE) $(HEADERS) | build
+	"$(CC)" $(SANFLAGS) src/main.c $(CORE) -o "$@"
+build/test_bridge_sanitize: tests/test_bridge.c $(CORE) src/bridge.c $(HEADERS) | build
+	"$(CC)" $(SANFLAGS) tests/test_bridge.c $(CORE) src/bridge.c -o "$@"
+sanitize: build/test_sanitize build/clinic_sanitize build/test_bridge_sanitize
+	$(PYTHON) tools/manage.py sanitize
+endif
 clean:
-	rm -rf build
--include $(wildcard build/*.d)
+	$(PYTHON) tools/manage.py clean

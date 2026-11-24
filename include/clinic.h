@@ -1,20 +1,25 @@
 #ifndef CLINIC_H
 #define CLINIC_H
 #include <stdbool.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>
 #define NAME_LEN 80
+/* Explicitly unassigned, not a clinical priority and never queued. */
+#define UNASSIGNED_PRIORITY UINT_MAX
 #define HASH_BUCKETS 127
 #define CONSULT_MINUTES 15
 
-typedef enum { REGISTERED, WAITING, CONSULTING, COMPLETED, NO_SHOW } Status;
+/* Namespaced to avoid Windows nb30.h REGISTERED (0x04); stored value stays 0. */
+typedef enum { CLINIC_REGISTERED = 0, WAITING, CONSULTING, COMPLETED, NO_SHOW, AWAITING_TRIAGE } Status;
 typedef struct Patient {
     uint64_t id, order;
     char name[NAME_LEN];
     unsigned age, severity;
     Status status;
+    bool needs_review;
     time_t checked_in;
     struct Patient *hash_next;
 } Patient;
@@ -34,6 +39,7 @@ typedef struct Undo {
     Status previous_status;
     unsigned previous_severity;
     time_t previous_checkin;
+    bool previous_needs_review;
     struct Undo *next;
 } Undo;
 typedef struct {
@@ -73,8 +79,12 @@ void report_insertion_sort(Patient **items, size_t count, ReportKey key);
 void clinic_init(Clinic *clinic);
 void clinic_free(Clinic *clinic);
 const char *status_name(Status status);
-Patient *clinic_register(Clinic *clinic, const char *name, unsigned age);
+Patient *clinic_register(Clinic *clinic, const char *name, unsigned age, unsigned severity);
+Patient *clinic_register_pending(Clinic *clinic, const char *name, unsigned age);
+bool clinic_require_review(Clinic *clinic, uint64_t id);
+bool clinic_review_checkin(Clinic *clinic, uint64_t id, unsigned severity, time_t now);
 bool clinic_checkin(Clinic *clinic, uint64_t id, unsigned severity, time_t now);
+bool clinic_reprioritize(Clinic *clinic, uint64_t id, unsigned severity);
 Patient *clinic_next(Clinic *clinic);
 bool clinic_complete(Clinic *clinic, time_t now);
 bool clinic_no_show(Clinic *clinic, uint64_t id, time_t now);
@@ -84,6 +94,8 @@ size_t clinic_wait_minutes(const Clinic *clinic, uint64_t id);
 Patient **clinic_patients(const Clinic *clinic, size_t *count);
 /* Atomic replacement on save; failed loads leave the current clinic intact.
    Undo is session-local and deliberately not persisted. */
+/* UTF-8 path probe shared by the CLI and persistence layer. */
+bool clinic_file_present(const char *path, bool *present);
 bool clinic_save(const Clinic *clinic, const char *path);
 bool clinic_load(Clinic *clinic, const char *path);
 #endif

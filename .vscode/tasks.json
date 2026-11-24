@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Clinic: build",
+      "type": "process",
+      "command": "make",
+      "args": [
+        "all"
+      ],
+      "windows": {
+        "command": "mingw32-make"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Clinic: test",
+      "type": "process",
+      "command": "make",
+      "args": [
+        "test"
+      ],
+      "windows": {
+        "command": "mingw32-make"
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": "test"
+    },
+    {
+      "label": "Clinic: run",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "tools/launch.py"
+      ],
+      "windows": {
+        "command": "cmd.exe",
+        "args": [
+          "/d",
+          "/c",
+          "run.bat"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
