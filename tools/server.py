@@ -232,17 +232,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         public=self.path in {'/api/login','/api/patient/identify','/api/patient/preview','/api/patient/submit'}
         expected=self.server.patient_token if public else self.server.token
-        if not self.trusted() or not safe_token(self.headers.get('X-Clinic-Token',''),expected):
-            self.send(403,{'ok':False,'message':'Authorization failed. Patients use the patient page; staff must sign in.'}); return
+        authorized=self.trusted() and safe_token(self.headers.get('X-Clinic-Token',''),expected)
         try:
             length=int(self.headers.get('Content-Length','0'))
             if not 0<length<=16384 or self.headers.get_content_type()!='application/json': raise ValueError('Send a JSON object of at most 16384 bytes.')
             self.connection.settimeout(5)
-            body=json.loads(self.rfile.read(length).decode('utf-8'),object_pairs_hook=strict_object,
+            # Consume the bounded body before rejecting: closing with unread bytes
+            # can reset the connection before Windows clients receive the 403.
+            raw=self.rfile.read(length)
+            if len(raw)!=length: raise ValueError('Incomplete request body.')
+            if not authorized:
+                self.send(403,{'ok':False,'message':'Authorization failed. Patients use the patient page; staff must sign in.'}); return
+            body=json.loads(raw.decode('utf-8'),object_pairs_hook=strict_object,
                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Invalid JSON number.')))
             if self.server.assessments.blocked: raise RuntimeError('Storage recovery is required. Stop and restart after fixing storage.')
-            if self.path=='/api/login':
-                now=time.monotonic(); self.server.pin_attempts=[t for t in self.server.pin_attempts if now-t<60]
+            if self.path=='/api/login':                now=time.monotonic(); self.server.pin_attempts=[t for t in self.server.pin_attempts if now-t<60]
                 if len(self.server.pin_attempts)>=10:
                     self.send(429,{'ok':False,'message':'Too many sign-in attempts. Wait one minute.'}); return
                 if not isinstance(body,dict) or set(body)!={'pin'} or not isinstance(body['pin'],str) or not safe_token(body['pin'],self.server.staff_pin):
@@ -259,11 +263,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(404,{'ok':False,'message':'Not found.'}); return
             self.respond(body)
         except (ValueError,UnicodeError,TimeoutError) as error:
-            self.send(400,{'ok':False,'message':str(error)})
+            self.close_connection=True
+            if authorized: self.send(400,{'ok':False,'message':str(error)})
+            else: self.send(403,{'ok':False,'message':'Authorization failed. Patients use the patient page; staff must sign in.'})
         except Conflict as error:
             self.send(409,{'ok':False,'message':str(error)})
-        except (OSError,RuntimeError) as error:
-            self.send(500,{'ok':False,'message':str(error)})
+        except (OSError,RuntimeError) as error:            self.send(500,{'ok':False,'message':str(error)})
 
     def respond(self, body):
         try:
